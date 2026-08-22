@@ -163,3 +163,54 @@ describe("credentials", () => {
     expect((init.headers as Record<string, string>)["APCA-API-SECRET-KEY"]).toBe("test-secret");
   });
 });
+
+describe("option chain pagination", () => {
+  /** OCC symbol for an expiry `days` out, so the helper under test can date it. */
+  function occ(root: string, days: number, strike: number) {
+    const d = new Date(Date.now() + days * 86_400_000);
+    const yy = String(d.getUTCFullYear()).slice(2);
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${root}${yy}${mm}${dd}C${String(strike * 1000).padStart(8, "0")}`;
+  }
+  const page = (days: number, token: string | null) => ({
+    snapshots: { [occ("SPY", days, 100)]: { impliedVolatility: 0.2 } },
+    next_page_token: token,
+  });
+
+  it("follows next_page_token instead of stopping at the first page", async () => {
+    // Alpaca orders snapshots by contract symbol, so one page of a liquid chain holds only
+    // the nearest expiries. Stopping there silently pins the agent to ~8 DTE.
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(page(8, "t1")))
+      .mockResolvedValueOnce(jsonResponse(page(15, "t2")))
+      .mockResolvedValueOnce(jsonResponse(page(30, null)));
+
+    const chain = await new AlpacaClient().getOptionChain({ symbol: "SPY", targetDte: 28 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(Object.keys(chain)).toHaveLength(3);
+  });
+
+  it("stops as soon as the target horizon is in view", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(page(8, "t1")))
+      .mockResolvedValueOnce(jsonResponse(page(35, "t2")))
+      .mockResolvedValueOnce(jsonResponse(page(60, null)));
+
+    await new AlpacaClient().getOptionChain({ symbol: "SPY", targetDte: 30 });
+    // The third page would be wasted: 35 days already brackets a 30-day target.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps total requests so one huge chain cannot stall a run", async () => {
+    fetchMock.mockImplementation(alwaysJson(page(5, "more")));
+    await new AlpacaClient().getOptionChain({ symbol: "SPY", targetDte: 30, maxPages: 3 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("makes a single request when there is no next page", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(page(30, null)));
+    await new AlpacaClient().getOptionChain({ symbol: "SPY", targetDte: 30 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

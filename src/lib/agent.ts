@@ -94,7 +94,11 @@ export async function analyzeSymbol(
           strikeLte: price * 1.15,
           expirationGte: isoDate(config.minDte),
           expirationLte: isoDate(config.maxDte),
-          limit: 500,
+          // 1000 is the largest page Alpaca honours here (5000 returns an empty set), and
+          // halving the page count matters: 14 symbols paging a liquid chain approaches the
+          // 200 req/min account limit.
+          limit: 1000,
+          targetDte: config.targetDte,
         })
         .catch(() => ({}))
     : {};

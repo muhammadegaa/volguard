@@ -88,7 +88,14 @@ export function getConfig() {
     runRateLimitPerMinute: numberEnv("VOLGUARD_RUN_RATE_LIMIT", 30),
     mcpRateLimitPerMinute: numberEnv("VOLGUARD_MCP_RATE_LIMIT", 10),
 
-    symbols: (process.env.VOLGUARD_SYMBOLS ?? "SPY,QQQ,IWM,AAPL,MSFT,NVDA")
+    /**
+     * Screened for options liquidity rather than name recognition: every symbol here clears
+     * the 8% relative-spread gate on a majority of near-the-money contracts on the free
+     * `indicative` feed. AAPL (47%) and MSFT (28%) were removed for failing it more often
+     * than they passed, which was the cause of repeated "spread > 8% limit" rejections.
+     * Reproduce with `node --env-file=.env.local scripts/screen-liquidity.mjs`.
+     */
+    symbols: (process.env.VOLGUARD_SYMBOLS ?? "SPY,QQQ,IWM,DIA,TLT,GLD,SLV,NVDA,TSLA,PLTR,AMZN,MU,NFLX,TSM")
       .split(",")
       .map((symbol) => symbol.trim().toUpperCase())
       .filter(Boolean),

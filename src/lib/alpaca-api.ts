@@ -23,6 +23,19 @@ function isRetryable(status: number): boolean {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Days to the latest expiry present in a snapshot map; -1 when none parse. */
+function farthestDteSeen(snapshots: Record<string, unknown>): number {
+  let furthest = -1;
+  for (const symbol of Object.keys(snapshots)) {
+    const match = /^[A-Z]+(\d{2})(\d{2})(\d{2})[CP]\d{8}$/.exec(symbol);
+    if (!match) continue;
+    const expiry = Date.parse(`20${match[1]}-${match[2]}-${match[3]}T00:00:00Z`);
+    if (Number.isNaN(expiry)) continue;
+    furthest = Math.max(furthest, Math.round((expiry - Date.now()) / 86_400_000));
+  }
+  return furthest;
+}
+
 export class AlpacaClient {
   private readonly config = getConfig();
 
@@ -244,21 +257,41 @@ export class AlpacaClient {
     expirationGte?: string;
     expirationLte?: string;
     limit?: number;
+    /** Stop paging once an expiry at least this many days out has been seen. */
+    targetDte?: number;
+    /** Hard cap on requests, so a huge chain cannot stall a run. */
+    maxPages?: number;
   }): Promise<Record<string, AlpacaOptionSnapshot>> {
-    const query = new URLSearchParams({
-      feed: this.config.optionFeed,
-      limit: String(params.limit ?? 500),
-    });
-    if (params.type) query.set("type", params.type);
-    if (params.strikeGte !== undefined) query.set("strike_price_gte", params.strikeGte.toFixed(2));
-    if (params.strikeLte !== undefined) query.set("strike_price_lte", params.strikeLte.toFixed(2));
-    if (params.expirationGte) query.set("expiration_date_gte", params.expirationGte);
-    if (params.expirationLte) query.set("expiration_date_lte", params.expirationLte);
-    const payload = await this.request<{ snapshots?: Record<string, AlpacaOptionSnapshot> }>(
-      this.config.dataUrl,
-      `/v1beta1/options/snapshots/${encodeURIComponent(params.symbol)}?${query.toString()}`,
-    );
-    return payload.snapshots ?? {};
+    const pageSize = params.limit ?? 500;
+    const maxPages = params.maxPages ?? 6;
+    const snapshots: Record<string, AlpacaOptionSnapshot> = {};
+    let pageToken: string | undefined;
+
+    // Alpaca returns snapshots ordered by contract symbol, which sorts by expiry, so a
+    // single page of a liquid chain contains only the nearest expiries: SPY at limit=500
+    // returns two, both ~8 days out. Without following next_page_token the "expiry nearest
+    // the target horizon" choice silently degrades to "nearest expiry available", and the
+    // agent trades the highest-gamma part of the curve while believing it targets ~30 days.
+    for (let page = 0; page < maxPages; page += 1) {
+      const query = new URLSearchParams({ feed: this.config.optionFeed, limit: String(pageSize) });
+      if (params.type) query.set("type", params.type);
+      if (params.strikeGte !== undefined) query.set("strike_price_gte", params.strikeGte.toFixed(2));
+      if (params.strikeLte !== undefined) query.set("strike_price_lte", params.strikeLte.toFixed(2));
+      if (params.expirationGte) query.set("expiration_date_gte", params.expirationGte);
+      if (params.expirationLte) query.set("expiration_date_lte", params.expirationLte);
+      if (pageToken) query.set("page_token", pageToken);
+
+      const payload = await this.request<{
+        snapshots?: Record<string, AlpacaOptionSnapshot>;
+        next_page_token?: string | null;
+      }>(this.config.dataUrl, `/v1beta1/options/snapshots/${encodeURIComponent(params.symbol)}?${query.toString()}`);
+
+      Object.assign(snapshots, payload.snapshots ?? {});
+      pageToken = payload.next_page_token ?? undefined;
+      if (!pageToken) break;
+      if (params.targetDte !== undefined && farthestDteSeen(snapshots) >= params.targetDte) break;
+    }
+    return snapshots;
   }
 
   /** Alpaca nests latest option quotes under `quotes`, keyed by contract symbol. */

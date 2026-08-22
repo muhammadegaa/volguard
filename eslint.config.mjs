@@ -4,7 +4,9 @@ import nextPlugin from "@next/eslint-plugin-next";
 
 export default [
   {
-    ignores: [".next/**", "node_modules/**", ".volguard/**", "playwright-report/**", "test-results/**", "eslint.config.mjs"],
+    ignores: [".next/**", "node_modules/**", ".volguard/**", "playwright-report/**", "test-results/**", "eslint.config.mjs",
+      // Plain-JS operator scripts; not in tsconfig, so the typed parser cannot resolve them.
+      "scripts/**/*.mjs"],
   },
   {
     files: ["**/*.{js,mjs,ts,tsx}"],
