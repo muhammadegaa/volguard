@@ -1,7 +1,8 @@
 # VolGuard Research Notes
 
-Last verified: **2026-08-19**, against the live Alpaca paper API using the configured
-development credentials. Every Alpaca claim below was reproduced with a real request; where
+Last verified: **2026-08-22** (§6 onward); §§1–5 and §7 were verified **2026-08-19** and are
+date-stamped where the build has since moved on. All against the live Alpaca paper API using
+the configured development credentials. Every Alpaca claim below was reproduced with a real request; where
 a request failed, the failure is recorded rather than omitted.
 
 ---
@@ -171,7 +172,8 @@ cross-terms instead of dominating the sum. Measured across the live universe:
 | AAPL | 35.3% | 31.4% | 21% |
 | **MSFT** | **57.7%** | **41.4%** | **49%** |
 
-VolGuard prices the VRP against **bipower**, and additionally abstains outright when the
+VolGuard uses bipower to compute the jump share, and prices the VRP against a
+horizon-matched **forecast** of realized volatility (see §6). It additionally abstains outright when the
 jump share exceeds 35%. MSFT is now correctly rejected as `jump-contaminated (49%)`.
 
 **Why debit spreads only.** Max loss equals the premium paid and is known before the order
@@ -183,6 +185,12 @@ trade.
 ---
 
 ## 5. Verified end-to-end behaviour (2026-08-19, market open)
+
+> **Recorded as observed on 2026-08-19 and not restated since.** Two things below have
+> changed and these figures cannot be reproduced against the current build: the variance risk
+> premium was computed against a trailing 20-day estimate rather than the horizon-matched
+> forecast (§6), and the universe was six symbols rather than the fourteen now screened for
+> options liquidity. The verdicts remain a faithful record of what the agent did that day.
 
 A single dry run across the six-symbol universe produced six distinct, explainable verdicts:
 
@@ -202,6 +210,47 @@ passed.** No order was submitted (dry run).
 
 > Recorded as observed. The engine carried 26 gates on this date; a 27th (`market_open`) was
 > added on 2026-08-20 when the scan was decoupled from market hours, so current runs report 27.
+
+---
+
+## 6. Pricing the premium against a forecast (2026-08-20 → 22)
+
+Comparing a *forward* implied volatility against a *backward* realized one is not like for
+like. Measured across the watchlist on 2026-08-20, every symbol's 10-day realized vol sat far
+below its 20-day: the window still held a volatility episode that had already decayed, and
+bipower does not strip a sustained elevated stretch the way it strips a single jump.
+
+The premium is now priced against a HAR-RV forecast (Corsi 2009) over the traded expiry's own
+horizon, fit on jump-robust components from the symbol's own history. The pre-forecast value
+is retained as `trailingVarianceRiskPremium` so the change of basis stays auditable.
+
+**Validated walk-forward, strictly out of sample** — `npm run backtest`, full output in
+`docs/evidence/forecast-validation.md`. RMSE improves 6.1% / 3.0% / 10.0% at the 7 / 14 / 30
+session horizons against the trailing bipower estimator it replaces, and bias moves toward
+zero. The honest headline is calibration rather than accuracy; the gain at the horizon
+actually traded is 3%.
+
+Two claims made confidently *before* the measurement existed were falsified by it, and are
+recorded in the evidence file rather than quietly dropped:
+
+1. That 10-day realized vol was the honest benchmark. It is the **worst** predictor in the
+   panel — reframing the signal against it would have been a downgrade.
+2. That "the variance risk premium is positive 80–85% of the time, so five of six symbols
+   reading cheap proves the estimator is broken." That statistic is a property of *implied*
+   vol carrying a risk premium; no change to a **realized**-vol estimator can produce it, and
+   targeting it would have meant tuning until the answer looked right.
+
+Two dependent findings, both of which changed the code:
+
+- **Training window is load-bearing.** At the 260 bars the app fetched, the forecast measured
+  *worse* than the estimator it replaced. `VOLGUARD_BAR_SESSIONS` now defaults to 520; beyond
+  ~520 there is no further gain.
+- **The chain fetch never paginated.** Alpaca orders option snapshots by contract symbol,
+  which sorts by expiry, so one page of a liquid chain holds only the nearest expiries — SPY
+  at `limit=500` returned two, both ~8 days out. "Pick the expiry nearest the target horizon"
+  had silently become "pick the nearest expiry available", so the agent traded ~8 DTE while
+  believing it targeted 30. It also corrupted the signal: GLD read +22.1 vol points against
+  the truncated 12-day expiry and +3.1 once the correct expiry was in view.
 
 ---
 

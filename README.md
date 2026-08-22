@@ -40,9 +40,12 @@ Everything is computed from Alpaca data. Nothing is fabricated; anything unavail
 reported as unavailable.
 
 - **Realized volatility** — annualized close-to-close over 20 / 10 / 5 days.
-- **Bipower variation** — the jump-robust estimator (Barndorff-Nielsen & Shephard). This is
-  the baseline the premium is priced against, so a gap that *already happened* cannot make
-  future optionality look cheap. See below.
+- **Bipower variation** — the jump-robust estimator (Barndorff-Nielsen & Shephard). It
+  supplies the jump share below and the components the forecast is fit on, so a gap that
+  *already happened* cannot make future optionality look cheap. See below.
+- **Forecast realized volatility** — a HAR-RV fit over the traded expiry's own horizon. This
+  is the baseline the premium is priced against, and it reports its method, horizon,
+  in-sample R² and how far it was shrunk toward the trailing estimate. See below.
 - **Jump share** — the fraction of realized variance attributable to jumps. Above 35%, the
   agent abstains outright.
 - **Parkinson estimator** — high-low intraday range, as a cross-check on close-to-close.
@@ -74,14 +77,71 @@ already happened.
 | AAPL | 35.3% | 31.4% | 21% |
 | **MSFT** | **57.7%** | **41.4%** | **49%** |
 
-VolGuard prices against bipower and rejects MSFT as `jump-contaminated (49%)`.
+VolGuard rejects MSFT as `jump-contaminated (49%)` on the bipower-derived jump share, and
+prices the premium against a forecast rather than any trailing window at all — see
+**The volatility forecast** below.
+
+### Why the premium is priced against a forecast, not a trailing window
+
+Implied volatility is forward-looking over the life of the option. Comparing it against a
+*trailing* 20-day realized number is not like for like, and the mismatch is not academic —
+measured across the watchlist on 2026-08-20, every symbol's 10-day realized vol sat far below
+its 20-day, because the window still held a volatility episode that had already decayed.
+Bipower strips *jumps*, but not a genuinely elevated stretch sitting in the older half of the
+window.
+
+VolGuard therefore prices the premium against a **HAR-RV forecast** (Corsi 2009) of realized
+volatility over the traded expiry's own horizon, fit on the symbol's own history from
+jump-robust components:
+
+```
+VRP = ATM implied vol − forecast realized vol over `daysToExpiry`
+```
+
+The pre-forecast number is kept and displayed beside it as `trailingVarianceRiskPremium`, so
+the change of basis is auditable rather than asserted.
+
+**It is validated, not assumed.** `npm run backtest` runs a walk-forward comparison, strictly
+out of sample — at every origin the model sees only prior bars and is scored against a window
+it has never seen:
+
+| horizon | HAR | trailing bipower | RMSE | bias |
+|---|---|---|---|---|
+| 7 sessions | 13.96 | 14.87 | **6.1% better** | −0.61 vs −0.06 |
+| 14 sessions | 13.07 | 13.48 | **3.0% better** | −1.06 vs −1.35 |
+| 30 sessions | 11.37 | 12.63 | **10.0% better** | −1.56 vs −1.94 |
+
+The honest headline is **calibration, not accuracy** — a 3% RMSE gain at the horizon actually
+traded is modest. Two things this exercise falsified, both of which had been asserted
+confidently beforehand, are recorded in `docs/evidence/forecast-validation.md`.
+
+The forecast needs history: at 260 bars it measured **worse** than the estimator it replaces,
+so `VOLGUARD_BAR_SESSIONS` defaults to **520**. Beyond ~520 there is no further gain. When the
+fit is weak the forecast is shrunk toward the trailing estimate in proportion to how little it
+explains, which also measured better.
+
+### The universe is screened, not chosen by reputation
+
+The risk engine rejects any leg whose relative bid–ask spread exceeds 8%, so a symbol whose
+options rarely clear that gate is not tradable however well known it is. Screening 61
+candidates on the same free `indicative` feed the agent trades found only **14** clearing it on a
+majority of near-the-money contracts — and that AAPL cleared it on 47% and MSFT on 28%, which
+was the cause of repeated `spread > 8% limit` rejections. Both were removed.
+
+The watchlist is therefore `SPY, QQQ, IWM, DIA, TLT, GLD, SLV, NVDA, TSLA, PLTR, AMZN, MU,
+NFLX, TSM` — indices, rates, metals and single names, so the bets are less correlated than a
+list of mega-cap tech would be. Override with `VOLGUARD_SYMBOLS`.
+
+Reproduce with `node --env-file=.env.local scripts/screen-liquidity.mjs`; the result is
+committed at `docs/evidence/liquidity-screen.md`.
 
 ## The risk engine
 
 Twenty-seven deterministic gates run before any order. The model can propose and can veto;
 **only this engine can approve.**
 
-**Environment** — paper URL enforced · kill switch · account `ACTIVE` · options level ≥ 3
+**Environment** — paper URL enforced · kill switch · account `ACTIVE` · options level ≥ 3 ·
+market open
 **Structure** — exactly 2 legs · one long + one short · same expiry · same option type · all
 option legs · debit < strike width · positive debit · whole quantity · `day` time-in-force
 **Quote quality** — max quote age (90s, missing timestamp fails) · max relative spread (8%) ·
@@ -111,8 +171,9 @@ dominate). Exit orders are idempotent per leg per day.
                                             ▼
                         ┌──────────────────────────────────────────┐
                         │  volatility.ts   RV · bipower · jump      │
-                        │                  share · ATM IV · term ·  │
-                        │                  skew · ranks             │
+                        │                  share · HAR forecast ·   │
+                        │                  ATM IV · term · skew ·   │
+                        │                  ranks                    │
                         │  events.ts       weighted news taxonomy   │
                         └───────────────────┬──────────────────────┘
                                             ▼
@@ -180,6 +241,7 @@ a plain-language label, so a new limit cannot ship without one.
 | Secrets | Log fields are redacted by name *and* by value shape, so an Alpaca or Anthropic key cannot reach a log line |
 | Failure | Route-level error boundary that states plainly that a render error cannot cause a trade |
 | Health | `GET /api/health` for liveness/readiness; `?deep=1` performs a real authenticated Alpaca call |
+| Storage | The ledger is written under `.volguard/` locally and `/tmp/volguard/` on serverless, where the working directory is read-only. Writes are fail-soft: a storage error degrades to the in-process copy rather than killing a trading run, and the dashboard reports whether history is durable or per-instance |
 | Accessibility | Keyboard-operable scan list, visible focus rings, skip link, live regions, `progressbar` semantics, reduced-motion support |
 
 `/api/health` returns 503 whenever the paper lock does not hold, so a misconfigured instance
@@ -244,9 +306,10 @@ works — GitHub Actions, a container cron, or `watch curl`.
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint
-npm test            # vitest — 221 unit tests
+npm test            # vitest — 253 unit tests across 13 files
 npm run build       # next build
-npm run test:e2e    # playwright — 26 tests
+npm run test:e2e    # playwright — 34 tests
+npm run backtest    # walk-forward validation of the volatility forecast
 ```
 
 If port 3000 is occupied: `PLAYWRIGHT_PORT=3457 npm run test:e2e`.
@@ -266,17 +329,34 @@ These are real, verified, and none of them are worked around by faking data.
 - **The MCP bridge needs `uv` on the host.** It works locally and on any container host; it
   will not work on Vercel's serverless runtime. The REST adapter is the execution path in
   every environment, and MCP is a verified read-only inspection channel.
-- **Backtesting is not included.** Reported P&L comes only from the live paper account via
+- **No P&L backtest.** There is no historical implied-volatility series available, so the
+  trade leg of the variance risk premium is unvalidated and no simulated P&L is claimed
+  anywhere. The volatility *forecast* is a different matter: it is validated walk-forward,
+  strictly out of sample, and the evidence is committed (`npm run backtest`,
+  `docs/evidence/forecast-validation.md`). Reported P&L comes only from the live paper account via
   Alpaca portfolio history and fill activities. There are no simulated results anywhere.
 - **Paper fills are optimistic.** Alpaca paper fills do not model real queue position, so
   live slippage would be worse than shown. The one live paper fill so far came in $0.05
   *better* than the limit, which is exactly the kind of optimism not to extrapolate from.
 - **No track record.** One filled paper spread is not performance. The account is days old.
+- **Serverless history is per-instance.** With no external store configured, the ledger lives
+  in `/tmp` for the life of the instance and resets on a cold start. The System panel says
+  which. Set `VOLGUARD_STORE_PATH` to a persistent volume, or run it on a host with a disk.
+- **The run lock is process-local.** It does not prevent two serverless instances running
+  concurrently; the deterministic client order ID is what actually stops a duplicate order
+  reaching Alpaca.
+- **Implied-vol rank needs 20 trading days** of self-collected observations, so on a fresh
+  deployment it shows a sample count rather than a percentile — and on ephemeral storage it
+  may never reach the threshold at all.
+- **The MCP bridge spawns `uvx`** and cannot run on serverless. It degrades to "not probed"
+  rather than failing the run. The REST adapter is the execution path in every environment.
 - **Rate limiting is process-local.** In memory, so across several serverless instances the
   effective limit is the configured limit times the instance count. It bounds accidental
   hammering and API usage; it is not, and is not used as, an authorization control.
-- **Two E2E tests call the live Alpaca API.** They would fail on a network outage. Everything
-  else in the suite is hermetic.
+- **Most E2E tests touch the live Alpaca API.** Every page load fetches `/api/dashboard`,
+  which reads the account, clock, positions and portfolio history, so the browser suite would
+  fail during an Alpaca outage. The unit suite is fully hermetic; `npm run backtest` is
+  deliberately a script rather than a test so no network dependency enters `npm test`.
 
 ## Safety
 

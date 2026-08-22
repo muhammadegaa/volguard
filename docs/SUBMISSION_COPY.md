@@ -52,7 +52,7 @@ rank — it never invents a number it does not have.
 The signal is deliberately jump-robust. Raw realized volatility is dominated by gaps that
 have already happened: on 2026-08-19 MSFT showed 57.7% realized against 24.7% implied, an
 apparently enormous mispricing that was entirely one +15.5% earnings gap three weeks earlier.
-VolGuard prices the premium against bipower variation, the Barndorff-Nielsen & Shephard
+VolGuard uses bipower variation, the Barndorff-Nielsen & Shephard
 jump-robust estimator, and abstains outright when more than 35% of realized variance came
 from jumps. MSFT is correctly rejected as jump-contaminated rather than ranked first.
 
@@ -88,7 +88,9 @@ account ID is verified before execution and a kill switch blocks every path.
 
 Nothing in the dashboard is simulated. P&L comes only from Alpaca portfolio history and fill
 activities; where data is unavailable, VolGuard says so instead of showing a zero. There is
-no backtest, and none is claimed.
+no P&L backtest, and none is claimed — there is no historical implied-volatility series, so
+the trade leg is unvalidated. The volatility forecast is a separate matter and is validated
+walk-forward, strictly out of sample; see `docs/evidence/forecast-validation.md`.
 
 The hardest thing an agent can do is decline to act. VolGuard's most common output is
 NO_TRADE, each one with a specific, auditable reason. Forced activity is a bug.
@@ -186,14 +188,15 @@ Wrote both up so the next person doesn't lose an afternoon. 🐛
 ### Post 4 — abstention as a feature
 
 ```
-VolGuard scanned 6 symbols today and said no to 5 of them.
+VolGuard scanned 14 symbols today and said no to most of them.
 
-SPY   → event risk 69/100, catalyst priced in
-QQQ   → IV rich +6.6 vol pts, we only buy premium
-NVDA  → IV rich +4.9
-MSFT  → jump-contaminated, 49% of variance was one gap
-IWM   → eligible, weaker edge
-AAPL  → −6.7 vol pts. Traded.
+[Paste the real scan from the run you post about — every symbol, with the verdict the
+agent actually gave. Do not reuse the numbers below; they are the shape, not the data.]
+
+SPY   → event risk NN/100, catalyst priced in
+QQQ   → IV rich +N.N vol pts, we only buy premium
+MSFT  → jump-contaminated, NN% of variance was one gap
+XXXX  → −N.N vol pts. Traded.
 
 27 deterministic risk gates. The model can propose and can veto.
 Only the rules engine can approve.
@@ -209,14 +212,14 @@ VolGuard is live. 🚀
 An autonomous options agent for the @AlpacaHQ x @lablabai volatility track.
 
 → Real IV, greeks, term structure & skew from Alpaca option chains
-→ Jump-robust realized vol (bipower variation)
+→ Horizon-matched realized-vol forecast (HAR-RV on jump-robust components)
 → Event-risk taxonomy over Alpaca news
 → Defined-risk debit spreads — max loss is arithmetic, not a stop
 → 27 deterministic risk gates
 → Official Alpaca MCP server, 74 tools, read-only
 → Append-only audit ledger on every decision
 
-Paper only. No backtest, and none claimed.
+Paper only. No P&L backtest, and none claimed; the volatility forecast is validated walk-forward.
 
 Demo: «DEMO_URL»
 Code: «REPO_URL»

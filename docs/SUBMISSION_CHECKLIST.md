@@ -1,22 +1,26 @@
 # Final Submission Checklist
 
-Status as of 2026-08-19. Event opens 28 Aug 2026; deadline **4 Sept 2026, 15:00 UTC**.
+Status as of 2026-08-22. Event opens 28 Aug 2026; deadline **4 Sept 2026, 15:00 UTC**.
 
 ## Product — done
 
 - [x] Autonomous agent loop with scheduled entry point, run lock, timeout, retries.
-- [x] Options-first strategy: variance risk premium against jump-robust realized vol.
+- [x] Options-first strategy: variance risk premium against a horizon-matched realized-vol forecast.
 - [x] Real implied volatility, greeks, term structure and skew from Alpaca chain snapshots.
 - [x] Jump-contamination gate (bipower variation).
 - [x] Event-risk taxonomy over Alpaca news + corporate actions.
 - [x] Delta-targeted defined-risk debit spread selection with candidate search.
-- [x] 26-gate deterministic risk engine, every configured limit enforced.
+- [x] 27-gate deterministic risk engine, every configured limit enforced.
 - [x] Position monitoring and exits (profit target, stop, time stop).
 - [x] Paper-only enforcement at the adapter; account-ID verification; kill switch.
 - [x] Idempotent orders by deterministic client order ID.
 - [x] Append-only audit ledger.
 - [x] Performance sourced only from Alpaca portfolio history + fill activities.
-- [x] Judge-facing dashboard with per-metric provenance.
+- [x] Judge-facing dashboard with per-metric provenance, in a Guided and a Pro view.
+- [x] Horizon-matched HAR-RV volatility forecast, validated walk-forward (`npm run backtest`).
+- [x] Universe screened on measured options liquidity, not name recognition.
+- [x] Option chain paginated so the targeted expiry is actually reachable.
+- [x] Deployable: fail-soft storage, serverless-writable ledger path, honest durability reporting.
 
 ## Alpaca — done
 
@@ -29,13 +33,13 @@ Status as of 2026-08-19. Event opens 28 Aug 2026; deadline **4 Sept 2026, 15:00 
 - [x] Official MCP server: 74 tools discovered, real read-only calls, evidenced in ledger.
 - [x] MCP restricted to a read-only allow-list; write tools refused.
 
-## Quality — verified 2026-08-19
+## Quality — verified 2026-08-22
 
 - [x] `npm run typecheck` — clean.
 - [x] `npm run lint` — clean.
-- [x] `npm test` — 171 passed.
+- [x] `npm test` — 253 passed.
 - [x] `npm run build` — succeeds.
-- [x] `npm run test:e2e` — 9 passed.
+- [x] `npm run test:e2e` — 34 passed.
 - [x] `npm audit` — 0 vulnerabilities (Next upgraded 15 → 16.3.1 to clear 3 high transitive advisories in postcss/sharp).
 - [x] No secrets committed; `.env.local` gitignored and untracked.
 - [x] No fabricated market data, P&L, or screenshots anywhere.

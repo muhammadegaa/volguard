@@ -8,7 +8,10 @@ specific reason every time it declines.
 
 ## Users and use cases
 
-The dashboard is built so a first-time visitor can name all six in under a minute.
+The interface ships two views. **Guided** is the default: light, single-column, plain
+language, and deliberately has *no execution control at all*. **Pro** is the dense terminal
+with the full numeric detail and the paper-execution controls. A first-time visitor should be
+able to name all six use cases from Guided in under a minute.
 
 | # | Use case | Where it is visible |
 |---|---|---|
@@ -49,8 +52,8 @@ risk decision with all gates, the order intent, any Alpaca order IDs, and positi
 ## Strategy policy
 
 **Entry requires all of:**
-- ATM implied volatility and jump-robust realized volatility both available
-- Variance risk premium (ATM IV − bipower RV20) ≤ `VOLGUARD_MAX_ENTRY_VRP` (default 0)
+- ATM implied volatility and a horizon-matched realized-vol forecast both available
+- Variance risk premium (ATM IV − forecast realized vol over the traded expiry's horizon) ≤ `VOLGUARD_MAX_ENTRY_VRP` (default 0)
 - Jump share ≤ `VOLGUARD_MAX_JUMP_FRACTION` (default 0.35)
 - Event score < `VOLGUARD_MAX_EVENT_SCORE` (default 60)
 - Term structure not in backwardation beyond −2 vol points
@@ -59,7 +62,7 @@ risk decision with all gates, the order intent, any Alpaca order IDs, and positi
 
 **Direction** comes from spot vs the 20-day average, confirmed by 25-delta skew.
 
-**Structure is debit spreads only.** Maximum loss equals the premium paid and is known
+**Structure is debit spreads only** (credit spreads are designed but not enabled).** Maximum loss equals the premium paid and is known
 before the order is built. VolGuard therefore cannot express a short-premium view; rich
 implied volatility maps to abstain, which is a deliberate constraint, not an oversight.
 
@@ -112,6 +115,8 @@ A missing key, an outage, a refusal, a billing failure or malformed output all d
 - Paper execution is disabled, with the reason shown, when the token is absent, the kill
   switch is on, or the account ID does not match.
 - Loading, empty, disconnected, error and no-trade states all render meaningfully.
-- Every risk gate is inspectable, with its detail on hover and failures listed explicitly.
+- Every risk gate is inspectable and failures are listed explicitly. Pro shows all gates
+  with detail on hover; Guided summarises the count and folds the passing ones away, since a
+  wall of green ticks is reassurance rather than information.
 - Wide tables scroll inside their own container; the page never scrolls horizontally.
 - No secret ever reaches the browser (asserted in E2E).

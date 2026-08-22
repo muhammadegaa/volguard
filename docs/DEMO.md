@@ -49,16 +49,16 @@ operator token on the clipboard if you intend to show paper execution.
 > "Here's the whole watchlist scanned in one pass, and every symbol gets a verdict.
 > QQQ and NVDA — implied vol is rich, so we stand aside; we only ever buy premium.
 > SPY — event risk 69 out of 100, a catalyst is priced in, stand aside.
-> MSFT looks like the cheapest optionality on the board at minus 16 vol points — and it's
-> rejected. Forty-nine percent of its realized variance is one earnings gap that already
-> happened. We price against bipower variation, the jump-robust estimator, so a move that's
-> already in the past can't make future optionality look cheap."
+> Whichever symbol shows `jump-contaminated` is rejected even though it looks like the
+> cheapest optionality on the board — most of its realized variance is one earnings gap that
+> already happened, and a move in the past is not a forecast."
 
-*Point at the IV vs realized headline.*
+*Point at the two figures in the answer card.*
 
-> "AAPL is the one that survives: 24.9% implied against 31.4% jump-robust realized. Minus
-> 6.7 vol points. The market is charging less for movement than the stock has been
-> delivering."
+> "Read the numbers on screen, not from this script — they change every session. The card
+> shows what options cost against what the stock is *expected* to move over the life of the
+> option being priced, and the difference between them is the premium. That forecast is
+> validated out of sample; the evidence is in the repo.
 
 ## 0:45–1:00 — The spread and the risk gates
 
@@ -105,7 +105,8 @@ appears in the position monitor with P&L sourced from Alpaca.
 
 ## Never say
 
-- "Returns", "performance", or "backtest" — there is no backtest, and paper P&L is not a
-  track record.
+- "Returns", "performance", or "backtested P&L". Say instead: "the volatility forecast is
+  validated out of sample; the trading result is not backtested." Paper P&L is not a track
+  record.
 - Anything about profitability. The account is days old with a $0 P&L; say so if asked.
 - "Live trading". It is paper only and the adapter refuses non-paper hosts outright.

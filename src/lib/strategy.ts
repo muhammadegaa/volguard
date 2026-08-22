@@ -14,8 +14,9 @@ export interface StrategyVerdict {
 /**
  * VolGuard's edge is not direction, it is the price of movement.
  *
- * The variance risk premium (ATM implied vol minus 20-day realized vol) measures what the
- * option market charges for movement against what the underlying has actually delivered.
+ * The variance risk premium (ATM implied vol minus a horizon-matched forecast of realized
+ * vol) measures what the option market charges for movement against what the underlying is
+ * expected to deliver over the life of the option being priced.
  * When that premium is negative, optionality is cheap and a long-premium debit spread is
  * paying below fair value for convexity. When it is positive, options are expensive and
  * the honest action is to stand aside: VolGuard only ever buys premium, so a rich tape is

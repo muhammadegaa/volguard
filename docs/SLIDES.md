@@ -19,7 +19,7 @@ Footer: paper trading only · no real capital · not investment advice
 - The volatility track asks a different question: is the *premium* right?
 
 ## 3 — The thesis
-**Variance risk premium = implied volatility − realized volatility**
+**Variance risk premium = implied volatility − forecast realized volatility**
 
 - Implied = what the market **charges** for movement
 - Realized = what the underlying actually **delivered**
@@ -54,12 +54,15 @@ Discounted by recency and by whether the headline names the symbol. Plus corpora
 > Twenty analyst notes are not the same risk as one FDA decision.
 > A known catalyst means expensive premium is **compensation**, not mispricing.
 
-## 7 — The trade
-AAPL 2026-09-18 · long 315C (Δ0.53, IV 25.3%) / short 330C (Δ0.28, IV 24.5%)
+## 7 — The trade that was actually filled
+AAPL 2026-09-18 · long 320C / short 340C · paper, 2026-08-19
 
-| Debit | Width | Max loss | Max profit | R:R | Breakeven |
-|---|---|---|---|---|---|
-| $6.02 | $15 | **$602** | $898 | 1.49:1 | $321.02 |
+| Debit | Width | Max loss | Max profit | R:R |
+|---|---|---|---|---|
+| $5.65 filled | $20 | **$565** | $1,435 | 2.54:1 |
+
+Limit sent $5.70, filled $5.65 — $5.00 of slippage in our favour on one contract. Recorded
+in `docs/RESEARCH.md` §7 with the Alpaca order ID.
 
 **Max loss is arithmetic, not a stop.** It is known before the order exists.
 
@@ -68,7 +71,8 @@ AAPL 2026-09-18 · long 315C (Δ0.53, IV 25.3%) / short 330C (Δ0.28, IV 24.5%)
 environment · structure · quote freshness · spread · depth · per-trade cap · equity % ·
 daily loss budget · portfolio exposure · position count · buying power · duplicate order ID
 
-Live scan: 6 symbols → **5 abstentions, each with a stated reason** → 1 trade.
+Live scan: 14 symbols, each screened for options liquidity before it enters the watchlist →
+an abstention with a stated reason for most of them → at most one trade.
 
 ## 9 — Agent, not chatbot
 - Decides **whether** to act, not just what to buy
@@ -80,7 +84,8 @@ Live scan: 6 symbols → **5 abstentions, each with a stated reason** → 1 trad
 
 ## 10 — Honest close
 **What is real:** live Alpaca paper data · real IV and greeks · every number sourced
-**What is not claimed:** no backtest · no track record · paper fills are optimistic
+**What is not claimed:** no P&L backtest · no track record · paper fills are optimistic
+*(the volatility forecast is validated walk-forward — the trading result is not)*
 **What is disclosed:** indicative feed (no OPRA) · no VIX on this plan · open interest often null
 
 > The hardest thing an agent can do is decline to act.
