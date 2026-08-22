@@ -29,7 +29,7 @@ export function decideStrategy(observation: MarketObservation, config: VolGuardC
   const vol = observation.volatility;
   const rationale: string[] = [];
 
-  if (vol.atmImpliedVol === null || vol.bipowerVol20 === null || vol.varianceRiskPremium === null) {
+  if (vol.atmImpliedVol === null || vol.forecastVol === null || vol.varianceRiskPremium === null) {
     return {
       strategy: "no_trade",
       direction: "neutral",
@@ -40,9 +40,21 @@ export function decideStrategy(observation: MarketObservation, config: VolGuardC
   }
 
   const vrp = vol.varianceRiskPremium;
+  // This sentence is written to the audit ledger, so the arithmetic in it has to be the
+  // arithmetic that was actually performed. It previously named the trailing bipower
+  // estimate while quoting a premium computed against the forecast — a false identity,
+  // recorded on every run.
+  const basis = vol.forecastSource === "har"
+    ? `${vol.forecastHorizonDays}-day forecast realized`
+    : `${vol.forecastHorizonDays}-day trailing realized (forecast unavailable)`;
   rationale.push(
-    `ATM IV ${(vol.atmImpliedVol * 100).toFixed(1)}% vs 20d jump-robust realized ${(vol.bipowerVol20 * 100).toFixed(1)}% gives a variance risk premium of ${(vrp * 100).toFixed(1)} vol points.`,
+    `ATM IV ${(vol.atmImpliedVol * 100).toFixed(1)}% minus ${basis} ${(vol.forecastVol * 100).toFixed(1)}% gives a variance risk premium of ${(vrp * 100).toFixed(1)} vol points.`,
   );
+  if (vol.trailingVarianceRiskPremium !== null) {
+    rationale.push(
+      `For comparison, the pre-forecast basis (ATM IV minus trailing 20-day jump-robust realized ${((vol.bipowerVol20 ?? 0) * 100).toFixed(1)}%) would have read ${(vol.trailingVarianceRiskPremium * 100).toFixed(1)} vol points.`,
+    );
+  }
 
   // A trailing gap makes raw realized volatility enormous while saying nothing about what
   // the underlying will deliver from here. Refuse to read that as cheap optionality.

@@ -88,7 +88,17 @@ test.describe("guided view", () => {
     const versus = page.locator(".versus");
     if (await versus.count() === 0) test.skip(true, "This run returned no volatility data.");
     await expect(versus.getByText("Options cost")).toBeVisible();
-    await expect(versus.getByText("The stock moves")).toBeVisible();
+    await expect(versus.getByText("Expected to move")).toBeVisible();
+
+    // The two figures on screen must subtract to the verdict beneath them. Showing the
+    // trailing estimate beside a forecast-based premium shipped once; this catches it.
+    const nums = await versus.locator(".v-num").allTextContents();
+    const [cost, moves] = nums.map((t) => Number(t.replace("%", "")));
+    const strip = (await page.locator(".verdict-strip .vs-num").textContent()) ?? "";
+    const shown = Number(strip.replace(/[^\d.]/g, ""));
+    if (Number.isFinite(cost) && Number.isFinite(moves) && Number.isFinite(shown)) {
+      expect(Math.abs(Math.abs(cost - moves) - shown), `${cost} − ${moves} should equal ${shown}`).toBeLessThan(0.15);
+    }
     await expect(page.locator(".verdict-strip .vs-num")).toContainText(/pts (cheaper|pricier)/);
   });
 

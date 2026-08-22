@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AlpacaBar } from "../types";
 import {
   atmImpliedVol,
   bipowerVolatility,
@@ -12,8 +13,9 @@ import {
   toChainRows,
   trendVsSma,
   forecastVolatility,
+  buildVolatilityState,
 } from "../volatility";
-import { bars, chainRow } from "./fixtures";
+import { bars, chainRow, wanderingBars } from "./fixtures";
 
 describe("realizedVolatility", () => {
   it("returns null until there are enough bars for the window", () => {
@@ -216,24 +218,6 @@ describe("percentileRank", () => {
 });
 
 describe("forecastVolatility", () => {
-  /** Deterministic pseudo-random walk: real series are not periodic, and a perfectly
-   *  periodic one makes the HAR design matrix singular. */
-  function wanderingBars(count: number, scale = 0.012) {
-    const out = [];
-    let close = 100;
-    let seed = 42;
-    for (let i = 0; i < count; i += 1) {
-      seed = (seed * 1103515245 + 12345) % 2147483648;
-      const u = seed / 2147483648 - 0.5;
-      close = close * (1 + u * scale * 2);
-      out.push({
-        t: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
-        o: close, h: close * 1.005, l: close * 0.995, c: close, v: 1_000_000,
-      });
-    }
-    return out;
-  }
-
   /** Bars whose volatility decays: violent early, calm recently — the regime that broke the old signal. */
   function decayingBars(count: number): ReturnType<typeof bars> {
     const out = [];
@@ -330,5 +314,49 @@ describe("forecastVolatility", () => {
     const long = forecastVolatility(decayingBars(300), 60)!;
     expect(short.horizonDays).not.toBe(long.horizonDays);
     expect(short.value).not.toBeCloseTo(long.value, 6);
+  });
+});
+
+describe("the variance risk premium reconciles with what is displayed", () => {
+  /**
+   * The UI shows two volatility numbers side by side and a premium beneath them. If the
+   * premium is not exactly their difference, a judge subtracting them gets a different
+   * answer from the one on screen. That shipped once: the panels showed `bipowerVol20`
+   * while the premium was computed against `forecastVol`.
+   */
+  function state(bars: AlpacaBar[], atmIv: number) {
+    const rows = [
+      chainRow({ symbol: "X260918C00100000", strike: 100, delta: 0.5, impliedVol: atmIv, bid: 1, ask: 1.1 }),
+      chainRow({ symbol: "X260918P00100000", strike: 100, type: "put", delta: -0.5, impliedVol: atmIv, bid: 1, ask: 1.1 }),
+    ];
+    return buildVolatilityState({
+      bars, targetRows: rows, frontRows: rows, backRows: [],
+      ivHistory: [], minIvSamples: 20, horizonDays: 14,
+    });
+  }
+
+  it("equals implied minus the forecast, which is the pair rendered together", () => {
+    const v = state(wanderingBars(600), 0.30);
+    expect(v.forecastVol).not.toBeNull();
+    expect(v.varianceRiskPremium).not.toBeNull();
+    expect(v.varianceRiskPremium!).toBeCloseTo(v.atmImpliedVol! - v.forecastVol!, 12);
+  });
+
+  it("does NOT equal implied minus trailing bipower — the pair that used to be rendered", () => {
+    const v = state(wanderingBars(600), 0.30);
+    // If these ever coincide the test proves nothing, so require them to differ first.
+    expect(v.bipowerVol20).not.toBeCloseTo(v.forecastVol!, 4);
+    expect(v.varianceRiskPremium!).not.toBeCloseTo(v.atmImpliedVol! - v.bipowerVol20!, 4);
+  });
+
+  it("keeps the pre-fix number available and correctly defined", () => {
+    const v = state(wanderingBars(600), 0.30);
+    expect(v.trailingVarianceRiskPremium!).toBeCloseTo(v.atmImpliedVol! - v.bipowerVol20!, 12);
+  });
+
+  it("reports the horizon and method alongside, so the number can be labelled honestly", () => {
+    const v = state(wanderingBars(600), 0.30);
+    expect(v.forecastHorizonDays).toBe(14);
+    expect(["har", "trailing"]).toContain(v.forecastSource);
   });
 });

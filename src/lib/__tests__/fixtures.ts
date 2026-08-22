@@ -31,6 +31,27 @@ export function bars(count: number, start = 100, dailyMove = 0.01): AlpacaBar[] 
   return out;
 }
 
+/**
+ * Deterministic pseudo-random bars. `bars()` alternates by a fixed percentage, which makes
+ * every bipower term identical and the HAR design matrix exactly rank 1 — useful for testing
+ * the singular path, useless for testing a fit. Use this whenever a real fit is needed.
+ */
+export function wanderingBars(count: number, scale = 0.012, start = 100): AlpacaBar[] {
+  const out: AlpacaBar[] = [];
+  let close = start;
+  let seed = 42;
+  for (let i = 0; i < count; i += 1) {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    const u = seed / 2147483648 - 0.5;
+    close = close * (1 + u * scale * 2);
+    out.push({
+      t: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+      o: close, h: close * 1.005, l: close * 0.995, c: close, v: 1_000_000,
+    });
+  }
+  return out;
+}
+
 export function chainRow(overrides: Partial<ChainRow> & { symbol: string }): ChainRow {
   return {
     strike: 100,

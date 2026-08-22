@@ -181,9 +181,17 @@ function VolatilitySection({ observation }: { observation: MarketObservation | n
             <span className="sub">what the market charges</span>
           </div>
           <div className="vol-cell">
-            <label>Realized 20d · jump-robust</label>
-            <div className="v">{pct(v.bipowerVol20)}</div>
-            <span className="sub">what the stock delivered</span>
+            {/* The premium is priced against this, so it belongs beside it. Showing the
+                trailing estimate here made the three numbers fail to subtract. */}
+            <label>Forecast realized · {v.forecastHorizonDays ?? "—"}d</label>
+            <div className="v">{pct(v.forecastVol)}</div>
+            <span className="sub">
+              {v.forecastSource === "har"
+                ? `HAR fit${v.forecastR2 === null ? "" : `, in-sample R² ${v.forecastR2.toFixed(2)}`}`
+                : v.forecastSource === "trailing"
+                  ? "trailing fallback — too little history to fit"
+                  : "unavailable"}
+            </span>
           </div>
           <div className={`vol-cell verdict ${cheap ? "cheap" : "rich"}`}>
             <label>Variance risk premium</label>
@@ -193,6 +201,11 @@ function VolatilitySection({ observation }: { observation: MarketObservation | n
         </div>
 
         <div className="mgrid">
+          <div>
+            <label>Trailing VRP (pre-fix)</label>
+            <div className="v dim">{volpts(v.trailingVarianceRiskPremium)}</div>
+          </div>
+          <div><label>Bipower 20d</label><div className="v">{pct(v.bipowerVol20)}</div></div>
           <div><label>Realized 20d raw</label><div className="v">{pct(v.realizedVol20)}</div></div>
           <div>
             <label>Variance from jumps</label>
@@ -858,8 +871,11 @@ export default function Terminal() {
                           </div>
                           <span className="versus-arrow" aria-hidden="true">→</span>
                           <div className="versus-side">
-                            <span className="v-label">The stock moves</span>
-                            <span className="v-num">{pct(vol.bipowerVol20)}</span>
+                            {/* This must be the quantity the premium is actually computed
+                                against, or the two numbers on screen do not subtract to the
+                                verdict below them. */}
+                            <span className="v-label">Expected to move</span>
+                            <span className="v-num">{pct(vol.forecastVol)}</span>
                           </div>
                         </div>
                         <div className={`verdict-strip ${cheap ? "good" : "bad"}`}>
@@ -868,10 +884,17 @@ export default function Terminal() {
                             {vrp === null
                               ? "Not enough data to compare."
                               : cheap
-                                ? "than this stock actually moves"
-                                : "than this stock actually moves, so it is not worth buying"}
+                                ? "than this stock is expected to move"
+                                : "than this stock is expected to move, so it is not worth buying"}
                           </span>
                         </div>
+                        <p className="versus-note">
+                          Expected movement over the next {vol.forecastHorizonDays ?? "—"} days,
+                          {vol.forecastSource === "har"
+                            ? " forecast from this stock's own history"
+                            : " estimated from the trailing 20 days (not enough history to forecast)"}.
+                          {" "}<Term k="realized-volatility">How this is measured</Term>.
+                        </p>
                       </>
                     )}
                   </section>
