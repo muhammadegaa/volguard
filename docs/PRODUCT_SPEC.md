@@ -62,11 +62,24 @@ risk decision with all gates, the order intent, any Alpaca order IDs, and positi
 
 **Direction** comes from spot vs the 20-day average, confirmed by 25-delta skew.
 
-**Structure is debit spreads only** (credit spreads are designed but not enabled).** Maximum loss equals the premium paid and is known
-before the order is built. VolGuard therefore cannot express a short-premium view; rich
-implied volatility maps to abstain, which is a deliberate constraint, not an oversight.
+**Structure is defined-risk verticals only** — a debit spread when premium is cheap, a credit
+spread when it is rich. Maximum loss is the premium paid or the strike width less the credit
+collected, known before the order is built and verified arithmetically by the risk engine:
+`max_loss + max_profit` must equal the strike width, and both legs must trade in equal size.
+Nothing naked, no ratio spreads, no undefined risk in any regime.
 
-**Universe selection:** all symbols are scanned; the most negative variance risk premium wins.
+Sell-side gates are strictly tighter than buy-side ones, because the rich implied volatility
+being sold is compensation for a catalyst rather than a mispricing: event risk blocks at 25
+rather than 60, any backwardation blocks rather than two vol points, and the jump limit
+tightens to 25%.
+
+Premium selling sits behind `VOLGUARD_SELL_PREMIUM_ENABLED`, enforced in both the strategy
+layer and the risk engine, and is **off** pending verification of Alpaca's undocumented sign
+convention for a net-credit multi-leg limit price.
+
+**Universe selection:** all symbols are scanned, and the universe is screened for options
+liquidity before a symbol enters the watchlist at all. The most negative variance risk
+premium wins on the buy side.
 
 ## Safety policy
 
