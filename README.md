@@ -267,7 +267,42 @@ shows `ID MISMATCH` if it does not.
 
 > **Size your limits to your account.** `VOLGUARD_MAX_LOSS_PER_TRADE` below the cost of one
 > at-the-money spread means the agent can never size a position and will always abstain. The
-> defaults assume the standard $100k paper account.
+> defaults assume the standard $100k paper account. Note `.env.example` sets `1000` while the
+> code default is `250`, so omitting the variable gives a four-times tighter limit than the
+> example implies.
+
+## Deploying
+
+```bash
+vercel                      # or connect the repo in the Vercel dashboard
+```
+
+**Required environment variables.** Everything else has a working default.
+
+| Variable | Why |
+|---|---|
+| `ALPACA_API_KEY` · `ALPACA_SECRET_KEY` | Paper credentials |
+| `ALPACA_ACCOUNT_ID` | Verified against the connected account before any execution |
+| `VOLGUARD_OPERATOR_TOKEN` | Without it, paper execution is unreachable — dry run still works |
+| `CRON_SECRET` | Vercel sends `Authorization: Bearer $CRON_SECRET`; without it every scheduled run is rejected 403 |
+| `ANTHROPIC_API_KEY` | Optional. Absent or unfunded, the thesis degrades to a labelled rules-engine fallback rather than failing the run |
+
+**Three platform constraints worth knowing before you deploy:**
+
+- **History is per-instance.** The working directory is read-only on serverless, so the
+  ledger is written to `/tmp` and resets on a cold start. The System panel reports which.
+  Point `VOLGUARD_STORE_PATH` at a persistent volume, or run it on a host with a disk, if you
+  need the ledger to survive.
+- **Vercel Hobby caps cron at one run per day**, so the configured `*/15` schedule needs Pro
+  or an external scheduler hitting `/api/agent/scheduled` with the bearer token. Hobby also
+  caps a function at 60s, which is why `maxDuration` is 60 and the agent's own timeout is 45s
+  beneath it.
+- **The MCP bridge cannot run on serverless.** It spawns `uvx`, which is not in the runtime
+  image. It degrades to "not probed" rather than failing anything; the REST adapter is the
+  execution path in every environment. Run locally to demonstrate MCP.
+
+Check a deployment with `GET /api/health?deep=1` — it performs a real authenticated Alpaca
+call and returns 503 if the paper lock does not hold.
 
 ## Running the agent
 
