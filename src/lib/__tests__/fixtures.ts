@@ -100,6 +100,9 @@ export function intent(overrides: Partial<OrderIntent> = {}): OrderIntent {
     type: "limit",
     timeInForce: "day",
     limitPrice: 1.0,
+    netPrice: 1.0,
+    isCredit: false,
+    marginRequired: 100,
     width: 5,
     maxLoss: 100,
     maxProfit: 400,
@@ -137,4 +140,27 @@ export function paperEnv(extra: Record<string, string> = {}) {
   process.env.VOLGUARD_MAX_QUOTE_AGE_SECONDS = "90";
   process.env.VOLGUARD_MIN_QUOTE_SIZE = "5";
   Object.assign(process.env, extra);
+}
+
+/** A clean 1-lot bull put credit spread: $1.50 credit, $5 wide, so max loss is $350. */
+export function creditIntent(overrides: Partial<OrderIntent> = {}): OrderIntent {
+  return {
+    ...intent(),
+    clientOrderId: "volguard-2026-08-22-spy-bull_put_credit_spread",
+    strategy: "bull_put_credit_spread",
+    limitPrice: 1.5,
+    netPrice: -1.5,
+    isCredit: true,
+    marginRequired: 500,
+    width: 5,
+    maxLoss: 350,
+    maxProfit: 150,
+    rewardRisk: 150 / 350,
+    breakeven: 98.5,
+    legs: [
+      leg({ symbol: "SPY260918P00095000", strike: 95, type: "put" }),
+      leg({ symbol: "SPY260918P00100000", strike: 100, type: "put", side: "sell", positionIntent: "sell_to_open" }),
+    ],
+    ...overrides,
+  };
 }

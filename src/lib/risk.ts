@@ -55,7 +55,7 @@ export function evaluateRisk(input: RiskInput): RiskDecision {
   add("two_leg_spread", twoLegs, `${intent.legs.length} legs; Alpaca multi-leg orders accept 2 to 4`);
   add("defined_risk",
     twoLegs && intent.legs.some((leg) => leg.side === "buy") && intent.legs.some((leg) => leg.side === "sell"),
-    "Requires one long and one short leg so maximum loss is the net debit");
+    "Requires one bought and one sold leg so the worst case is bounded by the strike width");
   add("same_expiry",
     twoLegs && intent.legs[0].expirationDate === intent.legs[1].expirationDate,
     twoLegs ? `Both legs expire ${intent.legs[0].expirationDate}` : "Cannot compare expiries");
@@ -64,10 +64,27 @@ export function evaluateRisk(input: RiskInput): RiskDecision {
     twoLegs ? `Both legs are ${intent.legs[0].type}s` : "Cannot compare option types");
   add("all_option_legs", intent.legs.every((leg) => leg.type === "call" || leg.type === "put"),
     "Every leg is an option contract; equity legs are not supported in multi-leg orders");
-  add("debit_below_width", intent.width > 0 && intent.limitPrice < intent.width,
-    `Debit $${intent.limitPrice.toFixed(2)} vs width $${intent.width.toFixed(2)}`);
-  add("positive_debit", intent.limitPrice > 0 && Number.isFinite(intent.limitPrice),
-    `Net debit $${intent.limitPrice.toFixed(2)}`);
+  add("price_below_width", intent.width > 0 && Math.abs(intent.limitPrice) < intent.width,
+    `Net ${intent.isCredit ? "credit" : "debit"} $${Math.abs(intent.limitPrice).toFixed(2)} vs width $${intent.width.toFixed(2)}`);
+  add("positive_net_price", Math.abs(intent.limitPrice) > 0 && Number.isFinite(intent.limitPrice),
+    `Net ${intent.isCredit ? "credit" : "debit"} $${Math.abs(intent.limitPrice).toFixed(2)}`);
+  // The arithmetic proof that risk is bounded. A vertical's maximum loss and maximum profit
+  // must exhaust the strike width; anything naked, ratio'd or mis-computed fails here, which
+  // makes definedness something this engine verifies rather than something the selector
+  // asserts.
+  add("max_loss_matches_width",
+    intent.qty > 0 && Math.abs(intent.maxLoss + intent.maxProfit - intent.width * 100 * intent.qty) < 0.01,
+    `Max loss $${intent.maxLoss.toFixed(2)} + max profit $${intent.maxProfit.toFixed(2)} must equal the $${(intent.width * 100 * intent.qty).toFixed(2)} strike width`);
+  // Without this, two legs of the same type and expiry with unequal ratios pass every other
+  // structural gate while being a ratio spread with unbounded risk.
+  add("equal_leg_ratios", twoLegs && intent.legs[0].ratioQty === intent.legs[1].ratioQty,
+    twoLegs ? `Leg ratios ${intent.legs.map((leg) => leg.ratioQty).join(":")}` : "Cannot compare leg ratios");
+  // Enforced here as well as in the strategy layer: a flag honoured in only one place is
+  // bypassable by any path that builds an intent directly.
+  add("credit_spreads_enabled", !intent.isCredit || config.sellPremiumEnabled,
+    intent.isCredit
+      ? `Premium selling is ${config.sellPremiumEnabled ? "enabled" : "disabled"}`
+      : "Not a credit spread");
   add("whole_quantity", Number.isInteger(intent.qty) && intent.qty > 0, `Quantity: ${intent.qty}`);
   add("time_in_force", intent.timeInForce === "day",
     `Time in force ${intent.timeInForce}; options accept day or gtc only`);
@@ -105,9 +122,12 @@ export function evaluateRisk(input: RiskInput): RiskDecision {
     `Open risk $${input.openRiskDollars.toFixed(2)} + $${intent.maxLoss.toFixed(2)} vs ${(config.maxPortfolioRiskPercent * 100).toFixed(1)}% cap $${(equity * config.maxPortfolioRiskPercent).toFixed(2)}`);
   add("open_positions", input.openPositionCount < config.maxOpenPositions,
     `${input.openPositionCount} open / ${config.maxOpenPositions} max`);
+  // A credit spread's requirement is margin, not its maximum loss — comparing max loss would
+  // under-reserve. Reserving the full width is deliberately stricter than Alpaca, which nets
+  // the credit received against the requirement.
   add("buying_power",
-    Number.isFinite(buyingPower) ? intent.maxLoss <= buyingPower : Number.isFinite(cash) && intent.maxLoss <= cash,
-    `Debit $${intent.maxLoss.toFixed(2)} against buying power $${Number.isFinite(buyingPower) ? buyingPower.toFixed(2) : "unknown"}`);
+    Number.isFinite(buyingPower) ? intent.marginRequired <= buyingPower : Number.isFinite(cash) && intent.marginRequired <= cash,
+    `Requires $${intent.marginRequired.toFixed(2)} of buying power (${intent.isCredit ? "strike width for a short vertical" : "net debit"}) against $${Number.isFinite(buyingPower) ? buyingPower.toFixed(2) : "unknown"}`);
 
   // --- Idempotency -------------------------------------------------------
   add("no_duplicate_order", !input.duplicateClientOrderId,

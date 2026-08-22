@@ -293,10 +293,19 @@ vercel                      # or connect the repo in the Vercel dashboard
   ledger is written to `/tmp` and resets on a cold start. The System panel reports which.
   Point `VOLGUARD_STORE_PATH` at a persistent volume, or run it on a host with a disk, if you
   need the ledger to survive.
-- **Vercel Hobby caps cron at one run per day**, so the configured `*/15` schedule needs Pro
-  or an external scheduler hitting `/api/agent/scheduled` with the bearer token. Hobby also
-  caps a function at 60s, which is why `maxDuration` is 60 and the agent's own timeout is 45s
-  beneath it.
+- **Vercel Hobby runs cron once per day.** `vercel.json` is therefore set to `0 14 * * 1-5`
+  — one run per weekday shortly after the US open — because anything more frequent is
+  rejected at deploy time with *"Hobby accounts are limited to daily cron jobs."*
+  Once a day is not an autonomous loop, so the real cadence lives in
+  `.github/workflows/scheduled-run.yml`: GitHub Actions schedules are free on public repos
+  and hit the same endpoint every 15 minutes during market hours. Set the `VOLGUARD_URL` and
+  `CRON_SECRET` repository secrets to enable it. On Pro, restore `*/15 13-21 * * 1-5` in
+  `vercel.json` and disable the workflow.
+  Hobby also caps a function at 60s, which is why `maxDuration` is 60 and the agent's own
+  timeout is 45s beneath it.
+
+  Either way the endpoint owns every guard — interval gate, kill switch, market hours, run
+  lock — so it is safe to call more often than intended, and safe to call twice at once.
 - **The MCP bridge cannot run on serverless.** It spawns `uvx`, which is not in the runtime
   image. It degrades to "not probed" rather than failing anything; the REST adapter is the
   execution path in every environment. Run locally to demonstrate MCP.

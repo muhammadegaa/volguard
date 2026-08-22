@@ -50,6 +50,41 @@ export function getConfig() {
     shortLegDelta: numberEnv("VOLGUARD_SHORT_LEG_DELTA", 0.27),
     /** Reject a spread whose debit exceeds this fraction of the strike width. */
     maxDebitToWidth: numberEnv("VOLGUARD_MAX_DEBIT_TO_WIDTH", 0.7),
+
+    // ── Selling premium ────────────────────────────────────────────────────
+    /**
+     * Master switch for credit spreads, enforced in BOTH the strategy layer and the risk
+     * engine. A flag honoured in only one place is bypassable by any path that builds an
+     * intent directly, and the cost of doubling it is ten lines.
+     */
+    sellPremiumEnabled: boolEnv("VOLGUARD_SELL_PREMIUM_ENABLED", false),
+    /**
+     * Sign convention Alpaca expects for a net-credit multi-leg limit price. UNVERIFIED —
+     * the docs contain no credit example. Driven by config so the answer from a live probe
+     * is an environment change rather than a redeploy. Sending the wrong sign positive
+     * would pay to open a position whose max profit is that same amount.
+     */
+    creditLimitSign: (process.env.VOLGUARD_CREDIT_LIMIT_SIGN === "positive" ? "positive" : "negative") as "positive" | "negative",
+    /** Delta targets for a credit vertical: sell near the money, buy the far wing. */
+    creditShortLegDelta: numberEnv("VOLGUARD_CREDIT_SHORT_LEG_DELTA", 0.25),
+    creditLongLegDelta: numberEnv("VOLGUARD_CREDIT_LONG_LEG_DELTA", 0.10),
+    /** Reject a credit spread paying less than this fraction of the width it risks. */
+    minCreditToWidth: numberEnv("VOLGUARD_MIN_CREDIT_TO_WIDTH", 0.25),
+    /**
+     * Floor for selling premium. Between `maxEntryVrp` and this is a deliberate dead band:
+     * the premium carries a couple of vol points of measurement error, and an agent that
+     * flips between buying and selling on noise reads as incoherent.
+     */
+    minSellVrp: numberEnv("VOLGUARD_MIN_SELL_VRP", 0.03),
+    /**
+     * Selling into a known catalyst is categorically more dangerous than buying it — the
+     * rich implied vol being sold IS the compensation for that catalyst. Every sell-side
+     * gate is therefore stricter than its buy-side counterpart.
+     */
+    maxSellEventScore: numberEnv("VOLGUARD_MAX_SELL_EVENT_SCORE", 25),
+    maxSellJumpFraction: numberEnv("VOLGUARD_MAX_SELL_JUMP_FRACTION", 0.25),
+    /** Any backwardation at all blocks a sale: the front expiry is the one being sold. */
+    sellMinTermSlope: numberEnv("VOLGUARD_SELL_MIN_TERM_SLOPE", 0.0),
     /**
      * Entry gate. VolGuard buys optionality only when implied vol is cheap relative to what
      * the underlying is expected to deliver: VRP = ATM IV - forecast vol must be below this.

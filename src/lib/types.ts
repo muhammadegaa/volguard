@@ -26,8 +26,19 @@ export type AuditEventType =
   | "AGENT_FINISHED"
   | "ERROR";
 
-/** Debit spreads only: max loss is the premium paid, known before submission. */
-export type StrategyKind = "bull_call_debit_spread" | "bear_put_debit_spread" | "no_trade";
+/**
+ * Defined-risk verticals only. Every structure here has a maximum loss that is arithmetic
+ * rather than a stop: the premium paid for a debit spread, the strike width less the credit
+ * received for a credit spread. Nothing naked, nothing with unbounded risk, ever.
+ */
+export type StrategyKind =
+  | "bull_call_debit_spread"
+  | "bear_put_debit_spread"
+  /** Sell the higher-strike put, buy a lower-strike wing. Bullish, collects premium. */
+  | "bull_put_credit_spread"
+  /** Sell the lower-strike call, buy a higher-strike wing. Bearish, collects premium. */
+  | "bear_call_credit_spread"
+  | "no_trade";
 
 export const TradeThesisSchema = z.object({
   symbol: z.string().min(1).max(10),
@@ -36,7 +47,15 @@ export const TradeThesisSchema = z.object({
   catalyst: z.string().min(1).max(500),
   invalidation: z.string().min(1).max(500),
   confidence: z.number().min(0).max(1),
-  strategy: z.enum(["bull_call_debit_spread", "bear_put_debit_spread", "no_trade"]),
+  // Omitting a strategy here makes the model's echo fail validation and silently degrade
+  // to the rules fallback on every run of that type.
+  strategy: z.enum([
+    "bull_call_debit_spread",
+    "bear_put_debit_spread",
+    "bull_put_credit_spread",
+    "bear_call_credit_spread",
+    "no_trade",
+  ]),
   source: z.enum(["anthropic", "rules_fallback"]),
 });
 
@@ -152,8 +171,18 @@ export interface OrderIntent {
   qty: number;
   type: "limit";
   timeInForce: "day";
-  /** Net debit per spread. Total cash at risk is limitPrice * 100 * qty. */
+  /** Absolute premium per spread — the magnitude sent as `limit_price`. */
   limitPrice: number;
+  /** Signed net price per spread: > 0 we pay (debit), < 0 we receive (credit). */
+  netPrice: number;
+  /** True when the structure collects premium rather than paying it. */
+  isCredit: boolean;
+  /**
+   * Buying power to reserve. For a debit that is the premium; for a credit it is the full
+   * strike width, which is deliberately more conservative than Alpaca requires — they net
+   * the credit received against the margin under the CBOE universal spread rule.
+   */
+  marginRequired: number;
   /** Strike distance between the legs, in dollars. */
   width: number;
   maxLoss: number;
@@ -191,7 +220,13 @@ export interface PositionReview {
   underlying: string;
   qty: number;
   side: string;
+  /** Absolute, for display. `costBasisSigned` carries the direction. */
   costBasis: number;
+  /** Signed: positive for a long leg, negative for a short one. */
+  costBasisSigned: number;
+  strike: number | null;
+  expiry: string | null;
+  type: "call" | "put" | null;
   marketValue: number;
   unrealizedPl: number;
   unrealizedPlPct: number;

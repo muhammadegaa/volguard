@@ -1,4 +1,4 @@
-import type { VolGuardConfig } from "./config";
+import { getConfig, type VolGuardConfig } from "./config";
 import type { ExitPlan, OptionLeg, OrderIntent, StrategyKind } from "./types";
 import type { ChainRow } from "./volatility";
 
@@ -56,22 +56,57 @@ function nearestByDelta(rows: ChainRow[], target: number, take: number): ChainRo
 }
 
 export interface SpreadCandidate {
-  longLeg: ChainRow;
-  shortLeg: ChainRow;
-  longLiquidity: LiquidityReport;
-  shortLiquidity: LiquidityReport;
-  debit: number;
+  /** The leg bought. In a credit spread this is the far wing, not the valuable leg. */
+  buyLeg: ChainRow;
+  /** The leg sold. In a credit spread this is the near-the-money leg. */
+  sellLeg: ChainRow;
+  buyLiquidity: LiquidityReport;
+  sellLiquidity: LiquidityReport;
+  /** Signed net price per share: > 0 paid (debit), < 0 received (credit). */
+  netPrice: number;
   width: number;
   rejection: string | null;
 }
 
+export interface SpreadGeometry {
+  optionType: "call" | "put";
+  /** True when we pay to open. False when we collect premium. */
+  isDebit: boolean;
+  /** |delta| target for the leg bought. */
+  buyDelta: number;
+  /** |delta| target for the leg sold. */
+  sellDelta: number;
+}
+
 /**
- * Build a debit vertical from one expiry: long the ~0.55-delta contract, short the
- * ~0.27-delta contract further out of the money. Debit spreads are the only structure
- * VolGuard trades because the maximum loss equals the premium paid and is known here,
- * before the order is ever built.
+ * The four defined-risk verticals differ only in a small geometry table. Deriving them from
+ * one description keeps a single rejection ladder and a single sizing path, rather than four
+ * copies to keep in step.
  */
-export function selectDebitSpread(input: {
+export function structureGeometry(
+  strategy: Exclude<StrategyKind, "no_trade">,
+  config: VolGuardConfig,
+): SpreadGeometry {
+  switch (strategy) {
+    case "bull_call_debit_spread":
+      return { optionType: "call", isDebit: true, buyDelta: config.longLegDelta, sellDelta: config.shortLegDelta };
+    case "bear_put_debit_spread":
+      return { optionType: "put", isDebit: true, buyDelta: config.longLegDelta, sellDelta: config.shortLegDelta };
+    case "bull_put_credit_spread":
+      return { optionType: "put", isDebit: false, buyDelta: config.creditLongLegDelta, sellDelta: config.creditShortLegDelta };
+    case "bear_call_credit_spread":
+      return { optionType: "call", isDebit: false, buyDelta: config.creditLongLegDelta, sellDelta: config.creditShortLegDelta };
+  }
+}
+
+/**
+ * Build a defined-risk vertical from one expiry.
+ *
+ * Whichever of the four structures is asked for, the maximum loss is known here, before the
+ * order exists: the premium paid for a debit, the strike width less the credit for a credit.
+ * That is the property that makes any of this safe to automate.
+ */
+export function selectVerticalSpread(input: {
   rows: ChainRow[];
   strategy: Exclude<StrategyKind, "no_trade">;
   config: VolGuardConfig;
@@ -79,20 +114,20 @@ export function selectDebitSpread(input: {
   /** How many strikes around each delta target to consider. */
   breadth?: number;
 }): SpreadCandidate | null {
-  const optionType = input.strategy === "bull_call_debit_spread" ? "call" : "put";
-  const rows = input.rows.filter((row) => row.type === optionType);
+  const geometry = structureGeometry(input.strategy, input.config);
+  const rows = input.rows.filter((row) => row.type === geometry.optionType);
   if (rows.length < 2) return null;
 
   const breadth = input.breadth ?? 4;
-  const longCandidates = nearestByDelta(rows, input.config.longLegDelta, breadth);
-  const shortCandidates = nearestByDelta(rows, input.config.shortLegDelta, breadth);
-  if (longCandidates.length === 0 || shortCandidates.length === 0) return null;
+  const buyCandidates = nearestByDelta(rows, geometry.buyDelta, breadth);
+  const sellCandidates = nearestByDelta(rows, geometry.sellDelta, breadth);
+  if (buyCandidates.length === 0 || sellCandidates.length === 0) return null;
 
   const evaluated: SpreadCandidate[] = [];
-  for (const longLeg of longCandidates) {
-    for (const shortLeg of shortCandidates) {
-      if (longLeg.symbol === shortLeg.symbol) continue;
-      evaluated.push(evaluatePair(longLeg, shortLeg, optionType, input.config, input.now));
+  for (const buyLeg of buyCandidates) {
+    for (const sellLeg of sellCandidates) {
+      if (buyLeg.symbol === sellLeg.symbol) continue;
+      evaluated.push(evaluatePair(buyLeg, sellLeg, geometry, input.config, input.now));
     }
   }
   if (evaluated.length === 0) return null;
@@ -101,9 +136,16 @@ export function selectDebitSpread(input: {
   // stale quote on the nearest strike should not veto an otherwise tradable expiry.
   const viable = evaluated.filter((candidate) => candidate.rejection === null);
   if (viable.length > 0) {
-    return viable.sort(
-      (a, b) => (b.width - b.debit) / b.debit - (a.width - a.debit) / a.debit,
-    )[0];
+    // Debit ranks on reward:risk. Credit ranks on premium per dollar of width — both rise
+    // with the premium at a fixed width, but they diverge across widths, and reward:risk
+    // would push a seller toward the narrowest spread, which carries the worst fill quality
+    // and the highest fee drag per dollar at risk. The delta target already pins the
+    // probability of profit.
+    const score = (c: SpreadCandidate) =>
+      geometry.isDebit
+        ? (c.width - c.netPrice) / c.netPrice
+        : Math.abs(c.netPrice) / c.width;
+    return viable.sort((a, b) => score(b) - score(a))[0];
   }
 
   // Nothing qualified: return the closest miss so the run reports a specific reason.
@@ -111,37 +153,53 @@ export function selectDebitSpread(input: {
 }
 
 function evaluatePair(
-  longLeg: ChainRow,
-  shortLeg: ChainRow,
-  optionType: "call" | "put",
+  buyLeg: ChainRow,
+  sellLeg: ChainRow,
+  geometry: SpreadGeometry,
   config: VolGuardConfig,
   now: Date,
 ): SpreadCandidate {
-  // A call debit spread is long the lower strike; a put debit spread is long the higher.
-  const correctlyOrdered =
-    optionType === "call" ? longLeg.strike < shortLeg.strike : longLeg.strike > shortLeg.strike;
+  const { optionType, isDebit } = geometry;
 
-  const longLiquidity = assessLiquidity(longLeg, config, now);
-  const shortLiquidity = assessLiquidity(shortLeg, config, now);
-  const width = Math.abs(shortLeg.strike - longLeg.strike);
+  // A vertical is a debit when the leg bought is the nearer-the-money, more valuable one.
+  // The strike ordering for a given option type therefore INVERTS between debit and credit:
+  // call+debit buys the lower strike, call+credit buys the higher.
+  const buyIsLowerStrike = optionType === "call" ? isDebit : !isDebit;
+  const correctlyOrdered = buyIsLowerStrike
+    ? buyLeg.strike < sellLeg.strike
+    : buyLeg.strike > sellLeg.strike;
 
-  // Pay the ask on the long leg, receive the bid on the short leg: the price we could
-  // actually cross at, never the mid.
-  const debit =
-    longLeg.ask !== null && shortLeg.bid !== null ? Number((longLeg.ask - shortLeg.bid).toFixed(2)) : Number.NaN;
+  const buyLiquidity = assessLiquidity(buyLeg, config, now);
+  const sellLiquidity = assessLiquidity(sellLeg, config, now);
+  const width = Math.abs(sellLeg.strike - buyLeg.strike);
+
+  // Pay the ask on what we buy, receive the bid on what we sell — the price we could
+  // actually cross at, never the mid. Worst case in both directions: for a credit spread
+  // this is the least credit realistically obtainable.
+  const netPrice =
+    buyLeg.ask !== null && sellLeg.bid !== null
+      ? Number((buyLeg.ask - sellLeg.bid).toFixed(2))
+      : Number.NaN;
+  const premium = Math.abs(netPrice);
 
   let rejection: string | null = null;
   if (!correctlyOrdered) rejection = "delta targets did not produce a correctly ordered vertical";
-  else if (!Number.isFinite(debit)) rejection = "one leg is missing a tradable side of the quote";
-  else if (debit <= 0) rejection = `net debit ${debit} is not positive; this is not a debit spread`;
+  else if (!Number.isFinite(netPrice)) rejection = "one leg is missing a tradable side of the quote";
+  else if (isDebit && netPrice <= 0) rejection = `net debit ${netPrice} is not positive; this is not a debit spread`;
+  else if (!isDebit && netPrice >= 0) rejection = `net credit ${(-netPrice).toFixed(2)} is not positive; this is not a credit spread`;
   else if (!(width > 0)) rejection = "both legs resolved to the same strike";
-  else if (debit >= width) rejection = `debit ${debit.toFixed(2)} >= width ${width.toFixed(2)}; no profit is possible`;
-  else if (debit / width > config.maxDebitToWidth) {
-    rejection = `debit is ${((debit / width) * 100).toFixed(0)}% of width, above the ${(config.maxDebitToWidth * 100).toFixed(0)}% limit`;
-  } else if (!longLiquidity.passed) rejection = `long leg: ${longLiquidity.detail}`;
-  else if (!shortLiquidity.passed) rejection = `short leg: ${shortLiquidity.detail}`;
+  else if (premium >= width) {
+    rejection = isDebit
+      ? `debit ${premium.toFixed(2)} >= width ${width.toFixed(2)}; no profit is possible`
+      : `credit ${premium.toFixed(2)} >= width ${width.toFixed(2)}; the quote is not credible`;
+  } else if (isDebit && premium / width > config.maxDebitToWidth) {
+    rejection = `debit is ${((premium / width) * 100).toFixed(0)}% of width, above the ${(config.maxDebitToWidth * 100).toFixed(0)}% limit`;
+  } else if (!isDebit && premium / width < config.minCreditToWidth) {
+    rejection = `credit is ${((premium / width) * 100).toFixed(0)}% of width, below the ${(config.minCreditToWidth * 100).toFixed(0)}% minimum for the risk taken`;
+  } else if (!buyLiquidity.passed) rejection = `buy leg: ${buyLiquidity.detail}`;
+  else if (!sellLiquidity.passed) rejection = `sell leg: ${sellLiquidity.detail}`;
 
-  return { longLeg, shortLeg, longLiquidity, shortLiquidity, debit, width, rejection };
+  return { buyLeg, sellLeg, buyLiquidity, sellLiquidity, netPrice, width, rejection };
 }
 
 function toLeg(
@@ -185,26 +243,46 @@ export function buildOrderIntent(input: {
   clientOrderId: string;
 }): OrderIntent {
   const { candidate, config } = input;
-  const perSpreadRisk = candidate.debit * 100;
+  const geometry = structureGeometry(input.strategy, config);
+  const isDebit = geometry.isDebit;
+  const premium = Math.abs(candidate.netPrice);
+  const width = candidate.width;
+
+  // The one place the four structures differ arithmetically. Debit risks what it paid and
+  // can win the rest of the width; credit risks the rest of the width and can win what it
+  // collected. Both sum to the width, which is what "defined risk" means and what the
+  // `max_loss_matches_width` gate independently verifies.
+  const maxLossPerSpread = (isDebit ? premium : width - premium) * 100;
+  const maxProfitPerSpread = (isDebit ? width - premium : premium) * 100;
+  // Deliberately conservative for a credit: Alpaca nets the credit received against the
+  // margin under the CBOE universal spread rule, so reserving the full width over-reserves.
+  const marginPerSpread = (isDebit ? premium : width) * 100;
+
   const budget = Math.min(
     config.maxLossPerTrade,
     input.equity * config.maxRiskPercent,
     Math.max(0, input.dailyLossRemaining),
   );
-  const qty = Math.max(0, Math.min(config.maxContracts, Math.floor(budget / perSpreadRisk)));
+  const qty = Math.max(0, Math.min(config.maxContracts, Math.floor(budget / maxLossPerSpread)));
 
-  const maxLoss = perSpreadRisk * qty;
-  const maxProfit = (candidate.width - candidate.debit) * 100 * qty;
-  const breakeven =
-    input.strategy === "bull_call_debit_spread"
-      ? candidate.longLeg.strike + candidate.debit
-      : candidate.longLeg.strike - candidate.debit;
+  const maxLoss = maxLossPerSpread * qty;
+  const maxProfit = maxProfitPerSpread * qty;
+
+  // Breakeven is anchored on the leg that carries the position: the long leg of a debit
+  // spread, the short leg of a credit spread.
+  const breakeven = isDebit
+    ? geometry.optionType === "call"
+      ? candidate.buyLeg.strike + premium
+      : candidate.buyLeg.strike - premium
+    : geometry.optionType === "put"
+      ? candidate.sellLeg.strike - premium
+      : candidate.sellLeg.strike + premium;
 
   const exitPlan: ExitPlan = {
-    takeProfitDebit: Number((candidate.debit + (candidate.width - candidate.debit) * config.takeProfitPercent).toFixed(2)),
-    stopLossDebit: Number((candidate.debit * (1 - config.stopLossPercent)).toFixed(2)),
+    takeProfitDebit: Number((isDebit ? premium + (width - premium) * config.takeProfitPercent : premium * (1 - config.takeProfitPercent)).toFixed(2)),
+    stopLossDebit: Number((isDebit ? premium * (1 - config.stopLossPercent) : premium * (1 + config.stopLossPercent)).toFixed(2)),
     timeStopDte: config.timeStopDte,
-    note: `Close at +${(config.takeProfitPercent * 100).toFixed(0)}% of max profit, at -${(config.stopLossPercent * 100).toFixed(0)}% of premium, or at ${config.timeStopDte} DTE, whichever comes first.`,
+    note: `Close at +${(config.takeProfitPercent * 100).toFixed(0)}% of max profit, at -${(config.stopLossPercent * 100).toFixed(0)}% of ${isDebit ? "premium" : "max loss"}, or at ${config.timeStopDte} DTE, whichever comes first.`,
   };
 
   return {
@@ -214,28 +292,39 @@ export function buildOrderIntent(input: {
     qty,
     type: "limit",
     timeInForce: "day",
-    limitPrice: candidate.debit,
-    width: candidate.width,
+    limitPrice: premium,
+    netPrice: candidate.netPrice,
+    isCredit: !isDebit,
+    marginRequired: marginPerSpread * qty,
+    width,
     maxLoss,
     maxProfit,
     rewardRisk: maxLoss > 0 ? maxProfit / maxLoss : 0,
     breakeven: Number(breakeven.toFixed(2)),
     legs: [
-      toLeg(candidate.longLeg, "buy", candidate.longLiquidity, input.openInterest.long),
-      toLeg(candidate.shortLeg, "sell", candidate.shortLiquidity, input.openInterest.short),
+      toLeg(candidate.buyLeg, "buy", candidate.buyLiquidity, input.openInterest.long),
+      toLeg(candidate.sellLeg, "sell", candidate.sellLiquidity, input.openInterest.short),
     ],
     exitPlan,
   };
 }
 
-/** Alpaca multi-leg payload. `limit_price` is the net debit for the whole spread. */
-export function orderPayload(intent: OrderIntent): Record<string, unknown> {
+/**
+ * Alpaca multi-leg payload.
+ *
+ * `limit_price` carries the premium for the whole spread. Alpaca does not document the sign
+ * convention for a net credit — every example in their docs is a debit — so it is driven by
+ * config rather than a constant, letting a live probe's answer be an environment change
+ * rather than a code change the night before a demo.
+ */
+export function orderPayload(intent: OrderIntent, config: VolGuardConfig = getConfig()): Record<string, unknown> {
+  const sign = intent.isCredit && config.creditLimitSign === "negative" ? -1 : 1;
   return {
     order_class: "mleg",
     qty: String(intent.qty),
     type: intent.type,
     time_in_force: intent.timeInForce,
-    limit_price: intent.limitPrice.toFixed(2),
+    limit_price: (sign * Math.abs(intent.limitPrice)).toFixed(2),
     client_order_id: intent.clientOrderId,
     legs: intent.legs.map((leg) => ({
       symbol: leg.symbol,
