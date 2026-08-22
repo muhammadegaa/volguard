@@ -299,8 +299,11 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
     // execution gate (`market_open` in the risk engine), not a reason to show nothing.
     const analyses = await Promise.all(
       config.symbols.map((symbol) =>
-        analyzeSymbol(client, symbol, config).catch((error): SymbolAnalysis | null => {
-          void event(runId, "ERROR", `Analysis failed for ${symbol}: ${error instanceof Error ? error.message : "unknown"}`);
+        analyzeSymbol(client, symbol, config).catch(async (error): Promise<SymbolAnalysis | null> => {
+          // Awaited, not fired and forgotten: an unhandled rejection here would surface as
+          // an isolate-level crash rather than a recorded per-symbol failure.
+          await event(runId, "ERROR", `Analysis failed for ${symbol}: ${error instanceof Error ? error.message : "unknown"}`)
+            .catch(() => undefined);
           return null;
         }),
       ),

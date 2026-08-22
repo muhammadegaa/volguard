@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getEvents, getRuns, getScheduleState } from "@/lib/audit-store";
+import { getEvents, getRuns, getScheduleState, storageStatus } from "@/lib/audit-store";
 import { AlpacaClient } from "@/lib/alpaca-api";
 import { getConfig, isConfigured } from "@/lib/config";
 import { getMcpBridgeStatus } from "@/lib/mcp-bridge";
@@ -61,8 +61,17 @@ export async function GET() {
       note: "Connect the paper account to load performance from Alpaca.",
     },
     dailyLossUsed: 0,
-    recentRuns,
+    // Only the newest run is ever rendered in detail, and per-symbol observations are the
+    // bulk of a run record — sending them for all ten made this an 84 KB response polled
+    // every thirty seconds.
+    recentRuns: recentRuns.map((run, index) =>
+      index === 0 ? run : { ...run, scanned: run.scanned.map((s) => ({ ...s, observation: null })) },
+    ),
     auditEvents,
+    storage: (() => {
+      const status = storageStatus();
+      return { durable: status.durable, ephemeral: status.ephemeral, lastError: status.lastError };
+    })(),
     mcp: getMcpBridgeStatus(),
     limits: {
       maxLossPerTrade: config.maxLossPerTrade,

@@ -19,6 +19,7 @@ const INITIAL: DashboardSnapshot = {
   paperOnly: true,
   killSwitch: false,
   schedule: { enabled: false, intervalMinutes: 15, lastRunAt: null, nextEligibleAt: null },
+  storage: { durable: true, ephemeral: false, lastError: null },
   account: { id: null, accountNumber: null, status: null, equity: null, cash: null, buyingPower: null, optionsLevel: null, idVerified: false },
   clock: { isOpen: null, nextOpen: null, nextClose: null },
   positions: [],
@@ -721,6 +722,7 @@ export default function Terminal() {
         ["Kill switch", !data.killSwitch, data.killSwitch ? "ENGAGED" : "clear"],
         ["Schedule", data.schedule.enabled, data.schedule.enabled ? `${data.schedule.intervalMinutes}m` : "manual"],
         ["MCP server", data.mcp.available, data.mcp.available ? `${data.mcp.toolCount} tools` : "not probed"],
+        ["Ledger", data.storage.durable, data.storage.durable ? (data.storage.ephemeral ? "this instance" : "persisted") : "memory only"],
       ] as const).map(([k, ok, v]) => (
         <div className="health-row" key={k}>
           <span className="k">{k}</span>

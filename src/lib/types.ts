@@ -275,6 +275,8 @@ export interface DashboardSnapshot {
   paperOnly: boolean;
   killSwitch: boolean;
   schedule: { enabled: boolean; intervalMinutes: number; lastRunAt: string | null; nextEligibleAt: string | null };
+  /** Where the ledger is kept and whether it survives a restart. Surfaced, never implied. */
+  storage: { durable: boolean; ephemeral: boolean; lastError: string | null };
   account: {
     id: string | null;
     accountNumber: string | null;

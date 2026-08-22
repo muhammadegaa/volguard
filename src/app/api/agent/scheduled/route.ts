@@ -8,7 +8,10 @@ import { getConfig, isConfigured } from "@/lib/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 90;
+// Vercel's Hobby plan caps a function at 60s and rejects a higher value at deploy time.
+// VOLGUARD_RUN_TIMEOUT_MS must stay below this or the platform kills the run before the
+// agent's own timeout can produce a clean, recorded ERROR result.
+export const maxDuration = 60;
 
 async function note(message: string, data?: Record<string, unknown>) {
   await appendEvent({

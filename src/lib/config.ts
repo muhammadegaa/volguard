@@ -81,7 +81,9 @@ export function getConfig() {
     scheduleEnabled: boolEnv("VOLGUARD_SCHEDULE_ENABLED", false),
     scheduleIntervalMinutes: numberEnv("VOLGUARD_SCHEDULE_INTERVAL_MINUTES", 15),
     scheduleMode: (process.env.VOLGUARD_SCHEDULE_MODE === "paper" ? "paper" : "dry-run") as AgentMode,
-    runTimeoutMs: numberEnv("VOLGUARD_RUN_TIMEOUT_MS", 60_000),
+    /** Must stay under the route's maxDuration (60s) so the agent times out before the
+     *  platform does, producing a recorded ERROR run rather than an opaque 504. */
+    runTimeoutMs: numberEnv("VOLGUARD_RUN_TIMEOUT_MS", 45_000),
 
     // Request throttling, per client per minute. Bounds Alpaca API usage and accidental
     // hammering; it is not an authorization control, so it can be tuned per deployment.
