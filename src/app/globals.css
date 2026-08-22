@@ -1023,3 +1023,43 @@ body[data-view="light"] { background: var(--paper); }
   .app { --t-hero: 32px; --t-h1: 24px; --t-h2: 19px; --t-lead: 17px; }
   .versus-arrow { display: none; }
 }
+
+/* ── Scan chart ────────────────────────────────────────────────
+   The whole scan as one picture. SVG scales to its container via a percentage viewBox, so
+   there is no measurement code and nothing to resize. */
+
+.scanchart { margin: 18px 0 0; }
+.scanchart figcaption {
+  margin-bottom: 10px; font-size: var(--t-label); color: var(--ink-3); line-height: 1.5;
+}
+.scanchart svg { width: 100%; height: auto; display: block; overflow: visible; }
+
+.sc-axis { stroke: var(--edge-2); stroke-width: 1; }
+.sc-label {
+  font-size: 11px; font-family: var(--mono); fill: var(--ink-2);
+  dominant-baseline: middle;
+}
+.sc-value { font-size: 10px; font-family: var(--mono); dominant-baseline: middle; }
+.sc-value.cheap { fill: var(--up); }
+.sc-value.rich  { fill: var(--hold); }
+.sc-hit { fill: transparent; cursor: pointer; }
+.sc-row:hover .sc-hit { fill: var(--sunken); }
+.sc-row:hover .sc-label { fill: var(--ink); }
+.sc-row.sel .sc-hit { fill: var(--act-dim); }
+.sc-row.sel .sc-label { fill: var(--act); font-weight: 600; }
+
+/* The forecast basis: the number every gate actually uses. */
+.sc-bar.cheap { fill: var(--up); }
+.sc-bar.rich  { fill: var(--hold); }
+/* The pre-forecast basis, drawn behind as an outline. Where the two diverge, the trailing
+   window was reading a regime that had already decayed. */
+.sc-ghost { fill: none; stroke: var(--edge-2); stroke-width: 1; stroke-dasharray: 3 2; }
+
+.sc-scale {
+  display: flex; justify-content: space-between;
+  margin-top: 4px; font-size: 10px; color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sc-bar { transition: opacity .12s ease; }
+}

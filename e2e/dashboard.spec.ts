@@ -111,6 +111,30 @@ test.describe("guided view", () => {
     await expect(pair.locator(".risk-cell.lose .r-num")).toContainText(/^\$/);
   });
 
+  test("charts the whole scan, including the basis it replaced", async ({ page }) => {
+    await runScan(page);
+    const chart = page.locator(".scanchart");
+    await expect(chart).toBeVisible();
+
+    const rows = await page.locator(".universe .u-row").count();
+    // One bar per scanned symbol that produced a premium.
+    expect(await chart.locator(".sc-bar").count()).toBeGreaterThan(0);
+    expect(await chart.locator(".sc-bar").count()).toBeLessThanOrEqual(rows);
+
+    // The dashed outline is the pre-forecast basis; showing both is the point of the chart.
+    expect(await chart.locator(".sc-ghost").count()).toBeGreaterThan(0);
+  });
+
+  test("selecting from the chart drives the same answer as the chips", async ({ page }) => {
+    await runScan(page);
+    const chartRows = page.locator(".scanchart .sc-row");
+    if (await chartRows.count() < 2) test.skip(true, "Not enough scanned symbols to compare.");
+
+    const label = (await chartRows.nth(1).locator(".sc-label").textContent())?.trim() ?? "";
+    await chartRows.nth(1).click();
+    await expect(page.locator(".universe .u-row.sel .u-sym")).toHaveText(label);
+  });
+
   test("keeps jargon out of the headline and the answer", async ({ page }) => {
     await runScan(page);
     const jargon = /variance risk premium|implied volatility|backwardation|bipower|convexity/i;
