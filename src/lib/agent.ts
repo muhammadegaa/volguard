@@ -11,7 +11,7 @@ import { AlpacaClient } from "./alpaca-api";
 import { buildOrderIntent, orderPayload, selectVerticalSpread } from "./chain";
 import { getConfig, isConfigured, modeIsAllowed, type VolGuardConfig } from "./config";
 import { classifyEventRisk } from "./events";
-import { closePayload, countOpenPositions, openRiskDollars, reviewPositions, reviewSpreads } from "./positions";
+import { closePayload, closeSpreadPayload, countOpenPositions, groupVerticals, openRiskDollars, reviewPositions, reviewSpreads } from "./positions";
 import { dailyLossUsed as dailyLossFromAccount } from "./performance";
 import { evaluateRisk } from "./risk";
 import { decideStrategy, type StrategyVerdict } from "./strategy";
@@ -187,26 +187,40 @@ async function reviewAndExit(input: {
   }
 
   const exitOrderIds: string[] = [];
-  for (const review of toClose) {
-    // Deterministic per leg per day: a repeated run cannot double-close a position.
-    const clientOrderId = `volguard-exit-${isoDate()}-${review.symbol}`.toLowerCase();
+
+  // Close whole positions, not legs. reviewSpreads already decides at group level, but
+  // submitting one single-leg order per leg reopens the hazard it exists to prevent: if the
+  // second submission fails, the short leg is left unhedged. One multi-leg order per group
+  // cannot be half-filled in that way.
+  for (const group of groupVerticals(reviews.filter((review) => review.action === "close"))) {
+    const single = group.legs.length === 1;
+    const clientOrderId = `volguard-exit-${isoDate()}-${single ? group.legs[0].symbol : group.key}`
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-");
+    const payload = single
+      ? closePayload(group.legs[0], clientOrderId)
+      : closeSpreadPayload(group, clientOrderId);
+    const label = single ? group.legs[0].symbol : `${group.legs.length}-leg ${group.key}`;
+    const reason = group.legs[0].reason;
+
     if (input.mode === "dry-run") {
-      await event(input.runId, "EXIT_SKIPPED", `Dry-run would close ${review.symbol}: ${review.reason}`, closePayload(review, clientOrderId));
+      await event(input.runId, "EXIT_SKIPPED", `Dry-run would close ${label}: ${reason}`, payload);
       continue;
     }
     const existing = await input.client.findOrderByClientId(clientOrderId).catch(() => null);
     if (existing) {
-      await event(input.runId, "EXIT_SKIPPED", `Exit for ${review.symbol} already submitted today`, { clientOrderId });
+      await event(input.runId, "EXIT_SKIPPED", `Exit for ${label} already submitted today`, { clientOrderId });
       continue;
     }
     try {
-      const order = await input.client.submitOrder(closePayload(review, clientOrderId));
+      const order = await input.client.submitOrder(payload);
       if (typeof order.id === "string") exitOrderIds.push(order.id);
-      await event(input.runId, "EXIT_SUBMITTED", `Closed ${review.symbol}: ${review.reason}`, order);
+      await event(input.runId, "EXIT_SUBMITTED", `Closed ${label}: ${reason}`, order);
     } catch (error) {
-      await event(input.runId, "ERROR", `Exit for ${review.symbol} failed: ${error instanceof Error ? error.message : "unknown"}`);
+      await event(input.runId, "ERROR", `Exit for ${label} failed: ${error instanceof Error ? error.message : "unknown"}`, { clientOrderId });
     }
   }
+
   return { reviews, exitOrderIds };
 }
 
@@ -214,6 +228,19 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
   const runId = randomUUID();
   const startedAt = new Date();
   const config = getConfig();
+
+  // Losing the timeout race must stop the run from acting, not merely stop the caller from
+  // waiting. Without this, a timed-out run kept executing and could still place a real order
+  // after the caller had been told it failed.
+  const abort = new AbortController();
+
+  // Work already done is carried into whatever terminal record the run ends up with. An
+  // ERROR that reset these to defaults erased exits that had genuinely been submitted.
+  const progress: Pick<AgentRun, "scanned" | "positionReviews" | "exitOrderIds"> = {
+    scanned: [],
+    positionReviews: [],
+    exitOrderIds: [],
+  };
 
   const finish = async (
     partial: Partial<AgentRun> & Pick<AgentRun, "status" | "message">,
@@ -225,14 +252,12 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
       mode,
       trigger,
       symbol: null,
-      scanned: [],
       observation: null,
       thesis: null,
       risk: null,
       orderIntent: null,
       alpacaOrderId: null,
-      positionReviews: [],
-      exitOrderIds: [],
+      ...progress,
       durationMs: Date.now() - startedAt.getTime(),
       ...partial,
     };
@@ -267,9 +292,14 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
     });
   }
 
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Agent run exceeded the ${config.runTimeoutMs}ms timeout`)), config.runTimeoutMs),
-  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Signal first: the losing branch must be prevented from submitting anything.
+      abort.abort();
+      reject(new Error(`Agent run exceeded the ${config.runTimeoutMs}ms timeout`));
+    }, config.runTimeoutMs);
+  });
 
   try {
     return await Promise.race([execute(), timeout]);
@@ -277,6 +307,10 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
     const message = error instanceof Error ? error.message : "Unknown agent error";
     await event(runId, "ERROR", message);
     return finish({ status: "ERROR", message });
+  } finally {
+    // An uncleared timer holds the event loop for the full timeout after every fast run.
+    if (timer) clearTimeout(timer);
+    abort.abort();
   }
 
   async function execute(): Promise<AgentRun> {
@@ -295,6 +329,8 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
     // Position management runs whether or not a new entry is available: exits are not
     // conditional on finding a fresh setup.
     const { reviews, exitOrderIds } = await reviewAndExit({ client, runId, mode, config, positions });
+    progress.positionReviews = reviews;
+    progress.exitOrderIds = exitOrderIds;
 
     // Scan the whole universe, then act on the single best mispricing. The scan runs whether
     // or not the market is open — the analysis is the product, and a closed market is an
@@ -322,6 +358,7 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
         event: { ...item.observation.event, matchedHeadlines: item.observation.event.matchedHeadlines.slice(0, 3) },
       },
     }));
+    progress.scanned = scanned;
     await event(runId, "OBSERVATION", `Scanned ${usable.length} symbol(s) for volatility mispricing`, {
       scanned: scanned.map(({ symbol, verdict, varianceRiskPremium }) => ({ symbol, verdict, varianceRiskPremium })),
     });
@@ -475,7 +512,47 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
       });
     }
 
-    const order = await client.submitOrder(orderPayload(intent));
+    // The last gate, and the only one that is about this process rather than the market: a
+    // run that already lost the timeout race must not place an order the caller was told
+    // did not happen.
+    if (abort.signal.aborted) {
+      await event(runId, "ORDER_SKIPPED", "Run timed out before submission; no order was placed", { clientOrderId });
+      return finish({
+        status: "ERROR",
+        symbol: observation.symbol,
+        scanned,
+        observation,
+        thesis,
+        risk,
+        orderIntent: intent,
+        positionReviews: reviews,
+        exitOrderIds,
+        message: "The run exceeded its timeout before the order could be submitted. Nothing was sent.",
+      });
+    }
+
+    let order: Record<string, unknown>;
+    try {
+      order = await client.submitOrder(orderPayload(intent));
+    } catch (error) {
+      // Alpaca may have accepted the order before the failure — a network timeout after
+      // acceptance looks identical here. The intent and the client order id are what make
+      // that recoverable, so they are recorded rather than lost to a bare ERROR.
+      const detail = error instanceof Error ? error.message : "unknown submission error";
+      await event(runId, "ERROR", `Order submission failed for ${observation.symbol}: ${detail}`, { clientOrderId, intent });
+      return finish({
+        status: "ERROR",
+        symbol: observation.symbol,
+        scanned,
+        observation,
+        thesis,
+        risk,
+        orderIntent: intent,
+        positionReviews: reviews,
+        exitOrderIds,
+        message: `Order submission failed: ${detail}. Alpaca may still have accepted it — reconcile against client order id ${clientOrderId} before retrying.`,
+      });
+    }
     await event(runId, "ORDER_SUBMITTED", "Paper order submitted to Alpaca", order);
     return finish({
       status: "TRADE_APPROVED",
