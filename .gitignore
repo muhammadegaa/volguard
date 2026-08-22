@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.env
+.env.*
+!.env.example
+.volguard
+playwright-report
+test-results
+coverage
+.DS_Store

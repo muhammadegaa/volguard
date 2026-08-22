@@ -1,0 +1,291 @@
+# VolGuard
+
+**An autonomous options agent that buys movement only when it's cheap.**
+
+VolGuard compares what the option market *charges* for movement (implied volatility) against
+what the underlying has actually *delivered* (realized volatility). When premium is cheap
+and no known catalyst explains it, the agent buys a defined-risk debit spread on Alpaca
+paper. Any other time it does the harder thing and stays out — and writes down why.
+
+Built for the [Alpaca AI Trading Agents Hackathon](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon),
+volatility track. **Paper trading only. No real capital. Not investment advice.**
+
+---
+
+## The thesis in one paragraph
+
+Most trading agents predict direction. Direction is close to a coin flip, and an options
+position that is merely a levered directional bet is a stock signal wearing an options
+costume. VolGuard trades the quantity options actually price: **the variance risk premium**,
+the gap between implied and realized volatility. That premium is usually positive — options
+are typically expensive — which is why most people sell it. VolGuard only ever *buys*
+premium, and only on the comparatively rare occasions when it is negative. When premium is
+rich, the correct action is to abstain, not to invert into a risk it cannot define. This is
+why "no trade" is the most common output, and why that is a feature rather than a bug.
+
+## What it does, every run
+
+| # | Job | Detail |
+|---|---|---|
+| 1 | **Evaluate** | Scores volatility and event risk across the whole watchlist |
+| 2 | **Propose** | Selects a delta-targeted, defined-risk debit spread from the live chain |
+| 3 | **Reject** | Blocks weak, illiquid, stale or over-sized setups before they exist |
+| 4 | **Execute** | Submits only approved orders, paper-only, idempotent by client order ID |
+| 5 | **Monitor** | Reviews open legs each run; closes on profit target, stop, or time stop |
+| 6 | **Explain** | Writes every observation, gate and order to an append-only ledger |
+
+## The volatility engine
+
+Everything is computed from Alpaca data. Nothing is fabricated; anything unavailable is
+reported as unavailable.
+
+- **Realized volatility** — annualized close-to-close over 20 / 10 / 5 days.
+- **Bipower variation** — the jump-robust estimator (Barndorff-Nielsen & Shephard). This is
+  the baseline the premium is priced against, so a gap that *already happened* cannot make
+  future optionality look cheap. See below.
+- **Jump share** — the fraction of realized variance attributable to jumps. Above 35%, the
+  agent abstains outright.
+- **Parkinson estimator** — high-low intraday range, as a cross-check on close-to-close.
+- **ATM implied volatility** — interpolated at |delta| ≈ 0.50 from Alpaca's chain snapshot,
+  which serves real greeks and IV.
+- **Term structure** — front-expiry vs back-expiry ATM IV. Backwardation means the curve is
+  pricing a near-dated shock the news scan did not name, so the agent stands aside.
+- **25-delta skew** — put IV minus call IV, used to confirm direction.
+- **Realized-vol rank** — where 20-day realized sits in its own trailing 1-year range.
+- **Implied-vol rank** — Alpaca serves no IV history, so VolGuard accumulates its own daily
+  observation per symbol and shows `building (n obs)` until 20 samples exist. It never
+  invents a rank.
+- **Event risk** — a weighted taxonomy over Alpaca news (earnings, regulatory, M&A, macro,
+  policy, legal, leadership, ratings) scored by recency and by whether the headline actually
+  names the symbol, plus corporate actions in the window. Headline *count* is deliberately
+  not the signal: twenty rating notes are not the same risk as one FDA decision.
+
+### Why jump-robust volatility matters
+
+On 2026-08-19, MSFT showed 20-day realized volatility of **57.7%** against 24.7% implied —
+an apparently huge mispricing. It was one **+15.5%** earnings gap on 2026-07-30 carrying the
+entire signal. Raw realized volatility said "cheapest optionality available"; the move had
+already happened.
+
+| Symbol | RV20 (raw) | BV20 (jump-robust) | Jump share |
+|---|---|---|---|
+| SPY | 13.5% | 13.9% | 0% |
+| QQQ | 23.7% | 23.4% | 2% |
+| AAPL | 35.3% | 31.4% | 21% |
+| **MSFT** | **57.7%** | **41.4%** | **49%** |
+
+VolGuard prices against bipower and rejects MSFT as `jump-contaminated (49%)`.
+
+## The risk engine
+
+Twenty-seven deterministic gates run before any order. The model can propose and can veto;
+**only this engine can approve.**
+
+**Environment** — paper URL enforced · kill switch · account `ACTIVE` · options level ≥ 3
+**Structure** — exactly 2 legs · one long + one short · same expiry · same option type · all
+option legs · debit < strike width · positive debit · whole quantity · `day` time-in-force
+**Quote quality** — max quote age (90s, missing timestamp fails) · max relative spread (8%) ·
+minimum displayed depth · order size vs depth *(advisory)*
+**Money** — max loss per trade · max % of equity · **daily loss budget** · portfolio exposure
+cap · max open positions · buying power
+**Idempotency** — duplicate client order ID blocked against Alpaca
+**Advisory** — reward:risk · open interest
+
+Position sizing takes the tightest binding limit of per-trade cap, equity percentage and
+remaining daily budget. If no whole number of contracts fits, the run reports `NO_TRADE`
+rather than shrinking a limit.
+
+## Exits
+
+Every run reviews open option legs and closes on whichever comes first: **+50%** of max
+profit, **−50%** of premium paid, or **≤7 days to expiry** (before gamma and pin risk
+dominate). Exit orders are idempotent per leg per day.
+
+## Architecture
+
+```
+                        ┌──────────────────────────────────────────┐
+   Alpaca paper API ───▶│  observe   bars · chain(greeks+IV) ·      │
+   (REST, read)         │            news · corp actions · account  │
+                        └───────────────────┬──────────────────────┘
+                                            ▼
+                        ┌──────────────────────────────────────────┐
+                        │  volatility.ts   RV · bipower · jump      │
+                        │                  share · ATM IV · term ·  │
+                        │                  skew · ranks             │
+                        │  events.ts       weighted news taxonomy   │
+                        └───────────────────┬──────────────────────┘
+                                            ▼
+                        ┌──────────────────────────────────────────┐
+                        │  strategy.ts   VRP gate · event gate ·    │
+                        │                jump gate · backwardation  │
+                        │                gate → strategy or abstain │
+                        └───────────────────┬──────────────────────┘
+                                            ▼
+                        ┌──────────────────────────────────────────┐
+   Anthropic (optional)▶│  thesis.ts   narrate + stress-test.       │
+                        │              May veto. May NEVER upgrade  │
+                        │              an abstain into a trade.     │
+                        └───────────────────┬──────────────────────┘
+                                            ▼
+                        ┌──────────────────────────────────────────┐
+                        │  chain.ts    delta-targeted candidate     │
+                        │              search → debit spread        │
+                        │  risk.ts     27 deterministic gates       │
+                        └───────────────────┬──────────────────────┘
+                                            ▼
+                        ┌──────────────────────────────────────────┐
+   Alpaca paper API ◀───│  execute (paper only, idempotent)         │
+   (REST, write)        │  positions.ts  monitor + exit             │
+                        │  audit-store   append-only ledger         │
+                        └──────────────────────────────────────────┘
+
+   Alpaca MCP server ──▶  read-only inspection (get_clock, get_account_info).
+   (official, stdio)      Never on the order path. Evidenced in the ledger.
+```
+
+**The AI boundary is a hard one.** The model receives the structured observation and the
+engine's decision. It may rephrase, explain, and downgrade to `no_trade`. It may not change
+the symbol, change the strategy, or turn an abstain into a trade — each of those is checked
+and falls back to the rules engine, and each is covered by a test.
+
+## Two audiences, one set of numbers
+
+The interface opens in **Guided** mode and can be switched to **Pro** at any time; the choice
+is remembered.
+
+Guided mode never hides a number — it fronts each one with a sentence. The scan reads
+`Candidate` / `Event soon` / `Distorted` instead of `IV cheap (-4.1v)`; the volatility
+comparison reads *"Options are charging 25.2%"* against *"The stock actually delivers 31.7%"*
+equals *"6.5 pts cheaper"*; the risk gates read *"Paper account only, never real money"*
+instead of `paper_environment`. Every term of art is a clickable definition, and **Show the
+full numbers** expands the complete Pro view inline.
+
+Pro mode is the dense terminal: raw verdicts, the full 12-field volatility grid, the leg
+table with deltas and quote ages, and gate names as the engine emits them.
+
+The translation layer is `src/lib/explain.ts` — pure functions, unit-tested, because a wrong
+explanation is a correctness bug. One test asserts that every gate the risk engine emits has
+a plain-language label, so a new limit cannot ship without one.
+
+## Production hardening
+
+| Concern | What is in place |
+|---|---|
+| Transport | CSP with `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff`, strict referrer policy, HSTS in production, no `X-Powered-By` |
+| Caching | Every `/api/*` response is `no-store` and `noindex`; account data is never cached or indexed |
+| Input | Zod-validated request bodies; an invalid mode is rejected with 400 before the agent is reached |
+| Abuse | Per-client fixed-window rate limiting with `Retry-After` and `X-RateLimit-*` headers |
+| Observability | Structured JSON logs with a request id, duration and outcome; the id is returned to the client |
+| Secrets | Log fields are redacted by name *and* by value shape, so an Alpaca or Anthropic key cannot reach a log line |
+| Failure | Route-level error boundary that states plainly that a render error cannot cause a trade |
+| Health | `GET /api/health` for liveness/readiness; `?deep=1` performs a real authenticated Alpaca call |
+| Accessibility | Keyboard-operable scan list, visible focus rings, skip link, live regions, `progressbar` semantics, reduced-motion support |
+
+`/api/health` returns 503 whenever the paper lock does not hold, so a misconfigured instance
+can never be considered healthy by a deploy check or an uptime monitor.
+
+## Setup
+
+Requires Node 20+. For the MCP bridge, also [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
+
+```bash
+git clone <repo-url> && cd volguard
+npm install
+cp .env.example .env.local     # then fill in your Alpaca paper keys
+npm run dev                    # http://localhost:3000
+```
+
+Get paper keys at <https://app.alpaca.markets/paper/dashboard/overview>. Options trading is
+enabled by default on paper accounts at level 3.
+
+Set `ALPACA_ACCOUNT_ID` to your account **number** (e.g. `PA…`) or account UUID — VolGuard
+verifies the connected account matches before it will place anything, and the dashboard
+shows `ID MISMATCH` if it does not.
+
+> **Size your limits to your account.** `VOLGUARD_MAX_LOSS_PER_TRADE` below the cost of one
+> at-the-money spread means the agent can never size a position and will always abstain. The
+> defaults assume the standard $100k paper account.
+
+## Running the agent
+
+- **DRY RUN** — reads live Alpaca data end to end, builds the candidate, runs every gate,
+  and stops before the order endpoint. This is the default and it submits nothing.
+- **PAPER** — submits one defined-risk spread. Requires `VOLGUARD_OPERATOR_TOKEN` in the
+  `x-volguard-token` header; the UI collects it as a password field.
+
+```bash
+# Dry run
+curl -X POST localhost:3000/api/agent/run \
+  -H 'content-type: application/json' -d '{"mode":"dry-run"}'
+
+# Verify the MCP integration (starts the official server, runs read-only tools)
+curl -X POST localhost:3000/api/mcp
+```
+
+## Autonomy
+
+Serverless functions cannot hold a timer between requests, so autonomy is driven by an
+external clock calling `POST /api/agent/scheduled`. Every guard lives in the endpoint, so it
+is safe to call more often than intended and safe to call twice at once:
+
+- operator token **or** Vercel `Authorization: Bearer $CRON_SECRET`
+- `VOLGUARD_SCHEDULE_ENABLED` must be true · kill switch must be clear
+- interval rate-gate, enforced server-side regardless of caller
+- market-hours check before any chain request
+- single-run lock with a stale-lock timeout, so runs cannot overlap
+- run timeout, retries with backoff, and an audit event for every outcome including skips
+
+`vercel.json` ships a cron at `*/15 14-20 * * 1-5` (UTC, ≈ US market hours). Any scheduler
+works — GitHub Actions, a container cron, or `watch curl`.
+
+## Testing
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # eslint
+npm test            # vitest — 221 unit tests
+npm run build       # next build
+npm run test:e2e    # playwright — 26 tests
+```
+
+If port 3000 is occupied: `PLAYWRIGHT_PORT=3457 npm run test:e2e`.
+
+## Honest limitations
+
+These are real, verified, and none of them are worked around by faking data.
+
+- **Options data is the free `indicative` feed.** This account has no signed OPRA agreement
+  (`403 "OPRA agreement is not signed"`), so quotes are modified and trades delayed.
+- **No VIX.** Alpaca index data returns `403 "insufficient grants"` on this plan. VolGuard
+  computes its own ATM IV term structure from the chain instead.
+- **Open interest is frequently `null`** from Alpaca, so it is an advisory check only.
+  Liquidity gating uses quote size and relative spread, which are always present.
+- **Implied-vol rank needs 20 sessions** of self-collected history and shows
+  `building (n obs)` until then, rather than a fabricated number.
+- **The MCP bridge needs `uv` on the host.** It works locally and on any container host; it
+  will not work on Vercel's serverless runtime. The REST adapter is the execution path in
+  every environment, and MCP is a verified read-only inspection channel.
+- **Backtesting is not included.** Reported P&L comes only from the live paper account via
+  Alpaca portfolio history and fill activities. There are no simulated results anywhere.
+- **Paper fills are optimistic.** Alpaca paper fills do not model real queue position, so
+  live slippage would be worse than shown. The one live paper fill so far came in $0.05
+  *better* than the limit, which is exactly the kind of optimism not to extrapolate from.
+- **No track record.** One filled paper spread is not performance. The account is days old.
+- **Rate limiting is process-local.** In memory, so across several serverless instances the
+  effective limit is the configured limit times the instance count. It bounds accidental
+  hammering and API usage; it is not, and is not used as, an authorization control.
+- **Two E2E tests call the live Alpaca API.** They would fail on a network outage. Everything
+  else in the suite is hermetic.
+
+## Safety
+
+Paper URL is enforced at the adapter — the client refuses to call a non-paper host at all,
+even for a read. Account ID is verified before execution. The kill switch blocks every
+execution path. Secrets are server-side only and never reach the browser (asserted in E2E).
+`.env.local` is gitignored. Order submission is idempotent by deterministic client order ID.
+MCP is restricted to an allow-list of read-only tools and refuses anything else.
+
+## License
+
+MIT.

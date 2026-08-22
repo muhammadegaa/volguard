@@ -1,0 +1,109 @@
+import type { AgentMode } from "./types";
+
+function numberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function boolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  return raw === "true";
+}
+
+export function getConfig() {
+  const baseUrl = process.env.ALPACA_BASE_URL ?? "https://paper-api.alpaca.markets";
+  const paperOnly = baseUrl.includes("paper-api.alpaca.markets") && process.env.ALPACA_PAPER_TRADE !== "false";
+  return {
+    apiKey: process.env.ALPACA_API_KEY ?? "",
+    secretKey: process.env.ALPACA_SECRET_KEY ?? "",
+    accountId: process.env.ALPACA_ACCOUNT_ID ?? "",
+    baseUrl,
+    dataUrl: process.env.ALPACA_DATA_URL ?? "https://data.alpaca.markets",
+    /** Free indicative feed. `opra` requires a signed OPRA agreement this account does not have. */
+    optionFeed: process.env.ALPACA_OPTION_FEED ?? "indicative",
+    stockFeed: process.env.ALPACA_STOCK_FEED ?? "iex",
+    paperOnly,
+    killSwitch: boolEnv("VOLGUARD_KILL_SWITCH", false),
+
+    // Risk limits
+    maxLossPerTrade: numberEnv("VOLGUARD_MAX_LOSS_PER_TRADE", 250),
+    maxRiskPercent: numberEnv("VOLGUARD_MAX_RISK_PERCENT", 0.01),
+    maxDailyLoss: numberEnv("VOLGUARD_MAX_DAILY_LOSS", 500),
+    maxOpenPositions: numberEnv("VOLGUARD_MAX_OPEN_POSITIONS", 3),
+    maxPortfolioRiskPercent: numberEnv("VOLGUARD_MAX_PORTFOLIO_RISK_PERCENT", 0.05),
+    maxContracts: numberEnv("VOLGUARD_MAX_CONTRACTS", 5),
+
+    // Liquidity and quote quality
+    maxSpreadPercent: numberEnv("VOLGUARD_MAX_SPREAD_PERCENT", 0.08),
+    maxQuoteAgeSeconds: numberEnv("VOLGUARD_MAX_QUOTE_AGE_SECONDS", 90),
+    minQuoteSize: numberEnv("VOLGUARD_MIN_QUOTE_SIZE", 5),
+
+    // Strategy shape
+    minDte: numberEnv("VOLGUARD_MIN_DTE", 7),
+    maxDte: numberEnv("VOLGUARD_MAX_DTE", 60),
+    /** Preferred holding horizon. The chain expiry nearest this is the one traded. */
+    targetDte: numberEnv("VOLGUARD_TARGET_DTE", 30),
+    longLegDelta: numberEnv("VOLGUARD_LONG_LEG_DELTA", 0.55),
+    shortLegDelta: numberEnv("VOLGUARD_SHORT_LEG_DELTA", 0.27),
+    /** Reject a spread whose debit exceeds this fraction of the strike width. */
+    maxDebitToWidth: numberEnv("VOLGUARD_MAX_DEBIT_TO_WIDTH", 0.7),
+    /**
+     * Entry gate. VolGuard buys optionality only when implied vol is cheap relative to what
+     * the underlying is expected to deliver: VRP = ATM IV - forecast vol must be below this.
+     *
+     * NOTE: this threshold was tuned against the old trailing baseline and has deliberately
+     * NOT been re-tuned for the forecast. Changing the baseline and the threshold together
+     * would make the before/after uninterpretable, and tuning it until more trades appear
+     * would be fitting to the demo.
+     */
+    maxEntryVrp: numberEnv("VOLGUARD_MAX_ENTRY_VRP", 0.0),
+    /** Abstain entirely when event risk scores at or above this level. */
+    maxEventScore: numberEnv("VOLGUARD_MAX_EVENT_SCORE", 60),
+    /** Abstain when this share of realized variance came from jumps rather than drift. */
+    maxJumpFraction: numberEnv("VOLGUARD_MAX_JUMP_FRACTION", 0.35),
+    minIvSamplesForRank: numberEnv("VOLGUARD_MIN_IV_SAMPLES", 20),
+    /**
+     * Daily bars fetched per symbol. The volatility forecast needs roughly two years:
+     * walk-forward measured it as WORSE than the trailing estimator it replaces at 260
+     * bars, and better at 520. Beyond ~520 there is no further gain.
+     */
+    barSessions: numberEnv("VOLGUARD_BAR_SESSIONS", 520),
+
+    // Exits
+    takeProfitPercent: numberEnv("VOLGUARD_TAKE_PROFIT_PERCENT", 0.5),
+    stopLossPercent: numberEnv("VOLGUARD_STOP_LOSS_PERCENT", 0.5),
+    timeStopDte: numberEnv("VOLGUARD_TIME_STOP_DTE", 7),
+
+    // Autonomy
+    scheduleEnabled: boolEnv("VOLGUARD_SCHEDULE_ENABLED", false),
+    scheduleIntervalMinutes: numberEnv("VOLGUARD_SCHEDULE_INTERVAL_MINUTES", 15),
+    scheduleMode: (process.env.VOLGUARD_SCHEDULE_MODE === "paper" ? "paper" : "dry-run") as AgentMode,
+    runTimeoutMs: numberEnv("VOLGUARD_RUN_TIMEOUT_MS", 60_000),
+
+    // Request throttling, per client per minute. Bounds Alpaca API usage and accidental
+    // hammering; it is not an authorization control, so it can be tuned per deployment.
+    runRateLimitPerMinute: numberEnv("VOLGUARD_RUN_RATE_LIMIT", 30),
+    mcpRateLimitPerMinute: numberEnv("VOLGUARD_MCP_RATE_LIMIT", 10),
+
+    symbols: (process.env.VOLGUARD_SYMBOLS ?? "SPY,QQQ,IWM,AAPL,MSFT,NVDA")
+      .split(",")
+      .map((symbol) => symbol.trim().toUpperCase())
+      .filter(Boolean),
+  };
+}
+
+export type VolGuardConfig = ReturnType<typeof getConfig>;
+
+export function isConfigured(): boolean {
+  const config = getConfig();
+  return Boolean(config.apiKey && config.secretKey && config.paperOnly);
+}
+
+export function modeIsAllowed(mode: AgentMode): boolean {
+  if (mode === "dry-run") return true;
+  const config = getConfig();
+  return isConfigured() && config.paperOnly && Boolean(config.accountId);
+}
