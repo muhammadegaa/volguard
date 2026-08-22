@@ -89,10 +89,15 @@ export const GLOSSARY = {
     plain: "The total price paid per spread, after the option sold offsets part of the option bought.",
     why: "This is the cash at risk. Multiply by 100 (one contract covers 100 shares) and by the number of contracts.",
   },
+  "credit-spread": {
+    term: "Defined-risk credit spread",
+    plain: "Selling one option and buying another further away, on the same stock and expiry, for a single net credit.",
+    why: "You keep the credit if the stock stays away from the strike you sold. The option you bought caps the loss, so the worst case is the gap between the strikes less what you were paid — known before the order exists.",
+  },
   "max-loss": {
     term: "Maximum loss",
     plain: "The worst possible outcome of this position, in dollars.",
-    why: "For a debit spread it equals the net debit paid. It cannot lose more, which is what makes it safe to automate.",
+    why: "For a spread bought it is the premium paid; for one sold it is the gap between the strikes less the premium collected. Either way it cannot lose more, which is what makes it safe to automate.",
   },
   "max-profit": {
     term: "Maximum profit",
@@ -198,11 +203,23 @@ export function explainVerdict(verdict: string): Explanation {
     };
   }
 
-  const rich = /^IV rich \(\+([\d.]+)v\)/.exec(verdict);
+  const credit = /^IV rich \(\+([\d.]+)v\) → (call|put) credit spread/.exec(verdict);
+  if (credit) {
+    const bearish = credit[2] === "call";
+    return {
+      headline: `Candidate — options look expensive${bearish ? ", leaning down" : ", leaning up"}`,
+      detail: `Options are charging ${credit[1]} volatility points more than this stock is expected to move. That premium is sold as a defined-risk ${bearish ? "call" : "put"} spread, so the most that can be lost is the gap between the strikes less the premium collected.`,
+      tone: "good",
+    };
+  }
+
+  // Anchored: without the $ this branch swallows the credit verdict above and reports a
+  // trade as a skip.
+  const rich = /^IV rich \(\+([\d.]+)v\)$/.exec(verdict);
   if (rich) {
     return {
       headline: "Skipped — options are too expensive",
-      detail: `Options are charging ${rich[1]} volatility points more than this stock actually delivers. VolGuard only ever buys options, so an expensive market is a reason to wait.`,
+      detail: `Options are charging ${rich[1]} volatility points more than this stock is expected to move. Selling that premium is not switched on, so an expensive market is a reason to wait.`,
       tone: "neutral",
     };
   }
@@ -240,6 +257,8 @@ export function explainVerdict(verdict: string): Explanation {
 export function verdictChip(verdict: string): { label: string; tone: Tone } {
   const explanation = explainVerdict(verdict);
   if (/^IV cheap/.test(verdict)) return { label: "Candidate", tone: "good" };
+  if (/→ (call|put) credit spread$/.test(verdict)) return { label: "Sell premium", tone: "good" };
+  if (/^no VRP edge/.test(verdict)) return { label: "No edge", tone: "neutral" };
   if (/^jump-contaminated/.test(verdict)) return { label: "Distorted", tone: "warn" };
   if (/^event risk/.test(verdict)) return { label: "Event soon", tone: "warn" };
   if (/^IV rich/.test(verdict)) return { label: "Too pricey", tone: "neutral" };

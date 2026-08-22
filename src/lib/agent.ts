@@ -8,10 +8,10 @@ import {
   saveRun,
 } from "./audit-store";
 import { AlpacaClient } from "./alpaca-api";
-import { buildOrderIntent, orderPayload, selectDebitSpread } from "./chain";
+import { buildOrderIntent, orderPayload, selectVerticalSpread } from "./chain";
 import { getConfig, isConfigured, modeIsAllowed, type VolGuardConfig } from "./config";
 import { classifyEventRisk } from "./events";
-import { closePayload, countOpenPositions, openRiskDollars, reviewPositions } from "./positions";
+import { closePayload, countOpenPositions, openRiskDollars, reviewPositions, reviewSpreads } from "./positions";
 import { dailyLossUsed as dailyLossFromAccount } from "./performance";
 import { evaluateRisk } from "./risk";
 import { decideStrategy, type StrategyVerdict } from "./strategy";
@@ -176,7 +176,9 @@ async function reviewAndExit(input: {
   config: VolGuardConfig;
   positions: Array<Record<string, unknown>>;
 }): Promise<{ reviews: PositionReview[]; exitOrderIds: string[] }> {
-  const reviews = reviewPositions(input.positions, input.config);
+  // Group-level decisions: judging legs individually would close a credit spread's cheap
+  // wing on its own and leave a naked short.
+  const reviews = reviewSpreads(reviewPositions(input.positions, input.config), input.config);
   const toClose = reviews.filter((review) => review.action === "close");
   if (reviews.length > 0) {
     await event(input.runId, "POSITION_REVIEW", `Reviewed ${reviews.length} open option leg(s); ${toClose.length} flagged to close`, {
@@ -381,7 +383,7 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
       });
     }
 
-    const candidate = selectDebitSpread({ rows: chosen.rows, strategy: thesis.strategy, config, now: new Date() });
+    const candidate = selectVerticalSpread({ rows: chosen.rows, strategy: thesis.strategy, config, now: new Date() });
     if (!candidate || candidate.rejection) {
       return finish({
         status: "DATA_UNAVAILABLE",
@@ -421,7 +423,9 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
         orderIntent: intent,
         positionReviews: reviews,
         exitOrderIds,
-        message: `A single spread costs $${(candidate.debit * 100).toFixed(2)}, which exceeds the remaining risk budget. No position was opened.`,
+        // Max loss, not premium: for a credit spread the risk is the width less the credit,
+        // which is the number the budget is actually measured against.
+        message: `A single spread risks $${(intent.maxLoss || (Math.abs(candidate.netPrice) * 100)).toFixed(2)}, which exceeds the remaining risk budget. No position was opened.`,
       });
     }
 
@@ -432,7 +436,7 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
     const risk = evaluateRisk({
       account,
       openPositionCount: countOpenPositions(reviews.filter((review) => review.action === "hold")),
-      openRiskDollars: openRiskDollars(reviews),
+      openRiskDollars: openRiskDollars(reviews, config.maxLossPerTrade),
       dailyLossUsed,
       intent,
       duplicateClientOrderId: duplicate,

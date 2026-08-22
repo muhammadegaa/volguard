@@ -120,6 +120,48 @@ so `VOLGUARD_BAR_SESSIONS` defaults to **520**. Beyond ~520 there is no further 
 fit is weak the forecast is shrunk toward the trailing estimate in proportion to how little it
 explains, which also measured better.
 
+### Both sides of the premium, both defined-risk
+
+The variance risk premium is *positive* most of the time for large-cap equities — that is
+why option selling is profitable on average. An agent that only ever buys premium therefore
+abstains in the common regime and trades only a rare tail, which is where VolGuard started.
+
+It now trades either side, and never with undefined risk:
+
+| Regime | Structure | Maximum loss |
+|---|---|---|
+| Premium cheap (`VRP ≤ 0`) | Bull call / bear put **debit** spread | the premium paid |
+| Dead band | no trade | — |
+| Premium rich (`VRP ≥ +3 vol pts`) | Bull put / bear call **credit** spread | strike width − credit |
+
+The dead band between the thresholds is deliberate: the premium carries a couple of vol
+points of measurement error, and an agent that flips between buying and selling on
+consecutive runs is reading noise, not being decisive.
+
+**The sell-side gates are strictly tighter**, because selling into a known catalyst is
+categorically worse than buying into one — the rich implied volatility being sold *is* the
+compensation for that catalyst, and a binary event is exactly what breaches a short strike:
+
+| Gate | Buying | Selling |
+|---|---|---|
+| Event score | blocks at 60 | **blocks at 25**, and `elevated`/`high` severity blocks at any score |
+| Term structure | blocks below −2 vol pts | **blocks below 0** — any backwardation at all |
+| Jump share | blocks above 35% | **blocks above 25%** |
+
+Two properties make this safe to automate rather than merely intended to be. The risk engine
+*verifies* definedness arithmetically — `max_loss + max_profit` must equal the strike width,
+and both legs must trade in equal size, so a naked or ratio'd structure fails even if the
+selector produced one. And premium selling is behind `VOLGUARD_SELL_PREMIUM_ENABLED`,
+enforced in **both** the strategy layer and the risk engine, because a flag honoured in one
+place is bypassable by any path that builds an order directly.
+
+> **Not yet enabled.** Alpaca does not document the sign convention for a net-credit
+> multi-leg `limit_price` — every example in their docs is a debit. Sending the wrong sign
+> positive would pay to open a position whose maximum profit is that same amount: a silent,
+> guaranteed loss that looks like ordinary slippage. The convention is read from
+> `VOLGUARD_CREDIT_LIMIT_SIGN` so a live probe's answer is an environment change, and the
+> flag stays off until that probe has run.
+
 ### The universe is screened, not chosen by reputation
 
 The risk engine rejects any leg whose relative bid–ask spread exceeds 8%, so a symbol whose

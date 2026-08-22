@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { assessLiquidity, buildOrderIntent, orderPayload, quoteAgeSeconds, selectDebitSpread } from "../chain";
-import type { VolGuardConfig } from "../config";
-import { chainRow, intent } from "./fixtures";
+import {
+  assessLiquidity,
+  buildOrderIntent,
+  orderPayload,
+  quoteAgeSeconds,
+  selectVerticalSpread,
+  structureGeometry,
+} from "../chain";
+import { getConfig, type VolGuardConfig } from "../config";
+import { chainRow, creditIntent, intent, paperEnv } from "./fixtures";
 
 const NOW = new Date("2026-08-19T16:00:00Z");
 
@@ -70,14 +77,14 @@ describe("assessLiquidity", () => {
   });
 });
 
-describe("selectDebitSpread", () => {
+describe("selectVerticalSpread", () => {
   it("builds a call debit spread long the lower strike", () => {
-    const candidate = selectDebitSpread({ rows: callChain(), strategy: "bull_call_debit_spread", config, now: NOW });
+    const candidate = selectVerticalSpread({ rows: callChain(), strategy: "bull_call_debit_spread", config, now: NOW });
     expect(candidate?.rejection).toBeNull();
-    expect(candidate?.longLeg.strike).toBe(500);
-    expect(candidate?.shortLeg.strike).toBe(505);
+    expect(candidate?.buyLeg.strike).toBe(500);
+    expect(candidate?.sellLeg.strike).toBe(505);
     // Debit is ask on the long leg minus bid on the short leg, never mid-to-mid.
-    expect(candidate?.debit).toBeCloseTo(3.1, 2);
+    expect(candidate?.netPrice).toBeCloseTo(3.1, 2);
     expect(candidate?.width).toBe(5);
   });
 
@@ -86,10 +93,10 @@ describe("selectDebitSpread", () => {
       chainRow({ symbol: "SPY260918P00500000", type: "put", strike: 500, delta: -0.55, bid: 8.0, ask: 8.1, mid: 8.05, quoteTime: fresh() }),
       chainRow({ symbol: "SPY260918P00495000", type: "put", strike: 495, delta: -0.27, bid: 5.0, ask: 5.1, mid: 5.05, quoteTime: fresh() }),
     ];
-    const candidate = selectDebitSpread({ rows, strategy: "bear_put_debit_spread", config, now: NOW });
+    const candidate = selectVerticalSpread({ rows, strategy: "bear_put_debit_spread", config, now: NOW });
     expect(candidate?.rejection).toBeNull();
-    expect(candidate?.longLeg.strike).toBe(500);
-    expect(candidate?.shortLeg.strike).toBe(495);
+    expect(candidate?.buyLeg.strike).toBe(500);
+    expect(candidate?.sellLeg.strike).toBe(495);
   });
 
   it("rejects a debit that is too large a fraction of the width", () => {
@@ -97,7 +104,7 @@ describe("selectDebitSpread", () => {
       chainRow({ symbol: "A", strike: 500, delta: 0.55, bid: 8.0, ask: 8.1, mid: 8.05, quoteTime: fresh() }),
       chainRow({ symbol: "B", strike: 505, delta: 0.27, bid: 3.9, ask: 4.0, mid: 3.95, quoteTime: fresh() }),
     ];
-    const candidate = selectDebitSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
+    const candidate = selectVerticalSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
     expect(candidate?.rejection).toMatch(/% of width/);
   });
 
@@ -106,17 +113,17 @@ describe("selectDebitSpread", () => {
       chainRow({ symbol: "A", strike: 500, delta: 0.55, bid: 4.0, ask: 4.1, mid: 4.05, quoteTime: fresh() }),
       chainRow({ symbol: "B", strike: 505, delta: 0.27, bid: 5.0, ask: 5.1, mid: 5.05, quoteTime: fresh() }),
     ];
-    expect(selectDebitSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW })?.rejection)
+    expect(selectVerticalSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW })?.rejection)
       .toMatch(/not positive/);
   });
 
   it("propagates a stale-quote rejection from the legs", () => {
     const rows = callChain().map((row) => ({ ...row, quoteTime: fresh(9999) }));
-    expect(selectDebitSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW })?.rejection).toMatch(/old/);
+    expect(selectVerticalSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW })?.rejection).toMatch(/old/);
   });
 
   it("returns null when the chain has fewer than two contracts of the needed type", () => {
-    expect(selectDebitSpread({ rows: [callChain()[0]], strategy: "bull_call_debit_spread", config, now: NOW })).toBeNull();
+    expect(selectVerticalSpread({ rows: [callChain()[0]], strategy: "bull_call_debit_spread", config, now: NOW })).toBeNull();
   });
 
   it("skips a thin strike and picks a viable pair instead of vetoing the expiry", () => {
@@ -127,9 +134,9 @@ describe("selectDebitSpread", () => {
       chainRow({ symbol: "GOOD", strike: 499, delta: 0.58, bid: 8.6, ask: 8.7, mid: 8.65, quoteTime: fresh() }),
       chainRow({ symbol: "SHORT", strike: 505, delta: 0.27, bid: 5.0, ask: 5.1, mid: 5.05, quoteTime: fresh() }),
     ];
-    const candidate = selectDebitSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
+    const candidate = selectVerticalSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
     expect(candidate?.rejection).toBeNull();
-    expect(candidate?.longLeg.symbol).toBe("GOOD");
+    expect(candidate?.buyLeg.symbol).toBe("GOOD");
   });
 
   it("prefers the pair with the best reward for risk among viable ones", () => {
@@ -138,21 +145,21 @@ describe("selectDebitSpread", () => {
       chainRow({ symbol: "S_NARROW", strike: 503, delta: 0.27, bid: 6.0, ask: 6.1, mid: 6.05, quoteTime: fresh() }),
       chainRow({ symbol: "S_WIDE", strike: 510, delta: 0.28, bid: 5.6, ask: 5.7, mid: 5.65, quoteTime: fresh() }),
     ];
-    const candidate = selectDebitSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
+    const candidate = selectVerticalSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
     expect(candidate?.rejection).toBeNull();
     // 510 strike: width 10, debit 2.50 -> 3.0:1. 503 strike: width 3, debit 2.10 -> 0.43:1.
-    expect(candidate?.shortLeg.symbol).toBe("S_WIDE");
+    expect(candidate?.sellLeg.symbol).toBe("S_WIDE");
   });
 
   it("still reports a specific reason when no pair in the expiry qualifies", () => {
     const rows = callChain().map((row) => ({ ...row, bidSize: 1, askSize: 1 }));
-    const candidate = selectDebitSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
+    const candidate = selectVerticalSpread({ rows, strategy: "bull_call_debit_spread", config, now: NOW });
     expect(candidate?.rejection).toMatch(/quote size/);
   });
 });
 
 describe("buildOrderIntent", () => {
-  const candidate = selectDebitSpread({ rows: callChain(), strategy: "bull_call_debit_spread", config, now: NOW })!;
+  const candidate = selectVerticalSpread({ rows: callChain(), strategy: "bull_call_debit_spread", config, now: NOW })!;
 
   it("sizes to the tightest binding limit", () => {
     // $3.10 debit = $310 per spread; the $250 per-trade cap allows zero contracts.
@@ -234,5 +241,118 @@ describe("orderPayload", () => {
 
   it("carries the deterministic client order id used for idempotency", () => {
     expect(orderPayload(intent()).client_order_id).toBe("volguard-2026-08-19-spy-bull_call_debit_spread");
+  });
+});
+
+describe("all four defined-risk verticals", () => {
+  const STRUCTURES = [
+    "bull_call_debit_spread",
+    "bear_put_debit_spread",
+    "bull_put_credit_spread",
+    "bear_call_credit_spread",
+  ] as const;
+
+  function chainFor(type: "call" | "put") {
+    // |delta| and value both fall as a call goes further out of the money, and RISE as a put
+    // does the same, because a high-strike put is the in-the-money one. Getting that
+    // backwards makes a put fixture that no real chain would produce.
+    const strikes = [90, 95, 100, 105, 110];
+    const magnitudes = [0.80, 0.55, 0.27, 0.25, 0.10];
+    const prices = [11.1, 6.1, 3.1, 2.7, 1.05];
+    return strikes.map((strike, i) => {
+      const j = type === "call" ? i : strikes.length - 1 - i;
+      const mag = magnitudes[j];
+      const price = prices[j];
+      return chainRow({
+        symbol: `X260918${type === "call" ? "C" : "P"}${String(strike * 1000).padStart(8, "0")}`,
+        strike,
+        type,
+        delta: type === "call" ? mag : -mag,
+        bid: Number((price - 0.1).toFixed(2)),
+        ask: Number((price + 0.1).toFixed(2)),
+        mid: price,
+      });
+    });
+  }
+
+  it("prices every structure with the maximum loss bounded by the strike width", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true" });
+    for (const strategy of STRUCTURES) {
+      const geometry = structureGeometry(strategy, getConfig());
+      const candidate = selectVerticalSpread({
+        rows: chainFor(geometry.optionType),
+        strategy,
+        config: getConfig(),
+        now: new Date(),
+      });
+      expect(candidate, strategy).not.toBeNull();
+      expect(candidate!.rejection, `${strategy}: ${candidate!.rejection}`).toBeNull();
+
+      const built = buildOrderIntent({
+        symbol: "X",
+        strategy,
+        candidate: candidate!,
+        equity: 100_000,
+        dailyLossRemaining: 100_000,
+        openInterest: { long: 500, short: 500 },
+        config: getConfig(),
+        clientOrderId: `test-${strategy}`,
+      });
+
+      // This is what "defined risk" means, stated as arithmetic rather than as a claim.
+      expect(built.maxLoss + built.maxProfit, strategy).toBeCloseTo(built.width * 100 * built.qty, 6);
+      expect(built.maxLoss, strategy).toBeGreaterThan(0);
+      expect(built.maxLoss, strategy).toBeLessThanOrEqual(built.width * 100 * built.qty);
+
+      // Exactly one leg bought and one sold, in equal size — anything else is a ratio
+      // spread, which is not bounded.
+      expect(built.legs.filter((l) => l.side === "buy"), strategy).toHaveLength(1);
+      expect(built.legs.filter((l) => l.side === "sell"), strategy).toHaveLength(1);
+      expect(built.legs[0].ratioQty, strategy).toBe(built.legs[1].ratioQty);
+
+      // Breakeven always sits strictly between the strikes.
+      const strikes = built.legs.map((l) => l.strike);
+      expect(built.breakeven, strategy).toBeGreaterThan(Math.min(...strikes));
+      expect(built.breakeven, strategy).toBeLessThan(Math.max(...strikes));
+
+      // Sign discipline: a credit collects, a debit pays.
+      expect(built.isCredit, strategy).toBe(!geometry.isDebit);
+      expect(Math.sign(built.netPrice), strategy).toBe(geometry.isDebit ? 1 : -1);
+    }
+  });
+
+  it("orders the strikes correctly, which inverts between debit and credit", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true" });
+    const ordering: Record<string, "buyLower" | "buyHigher"> = {
+      bull_call_debit_spread: "buyLower",
+      bear_put_debit_spread: "buyHigher",
+      bull_put_credit_spread: "buyLower",
+      bear_call_credit_spread: "buyHigher",
+    };
+    for (const strategy of STRUCTURES) {
+      const geometry = structureGeometry(strategy, getConfig());
+      const c = selectVerticalSpread({ rows: chainFor(geometry.optionType), strategy, config: getConfig(), now: new Date() })!;
+      if (ordering[strategy] === "buyLower") expect(c.buyLeg.strike, strategy).toBeLessThan(c.sellLeg.strike);
+      else expect(c.buyLeg.strike, strategy).toBeGreaterThan(c.sellLeg.strike);
+    }
+  });
+
+  it("sends the credit sign the configuration asks for, and nothing else", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true", VOLGUARD_CREDIT_LIMIT_SIGN: "negative" });
+    const negative = orderPayload(creditIntent(), getConfig());
+    expect(negative.limit_price).toBe("-1.50");
+
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true", VOLGUARD_CREDIT_LIMIT_SIGN: "positive" });
+    expect(orderPayload(creditIntent(), getConfig()).limit_price).toBe("1.50");
+
+    // A debit is unaffected by the setting either way.
+    expect(orderPayload(intent(), getConfig()).limit_price).toBe("1.00");
+  });
+
+  it("opens both legs and sells the near-the-money one on a credit spread", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true" });
+    const legs = orderPayload(creditIntent(), getConfig()).legs as Array<Record<string, string>>;
+    expect(legs.map((l) => l.position_intent).sort()).toEqual(["buy_to_open", "sell_to_open"]);
+    expect(legs.every((l) => l.ratio_qty === "1")).toBe(true);
   });
 });

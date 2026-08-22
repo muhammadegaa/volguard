@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateRisk } from "../risk";
-import { account, intent, leg, paperEnv, riskBase } from "./fixtures";
+import { account, creditIntent, intent, leg, paperEnv, riskBase } from "./fixtures";
 
 const ORIGINAL = { ...process.env };
 
@@ -27,7 +27,8 @@ describe("evaluateRisk", () => {
     for (const required of [
       "paper_environment", "kill_switch", "account_status", "options_level", "market_open",
       "two_leg_spread", "defined_risk", "same_expiry", "same_option_type", "all_option_legs",
-      "debit_below_width", "positive_debit", "whole_quantity", "time_in_force",
+      "price_below_width", "positive_net_price", "max_loss_matches_width",
+      "equal_leg_ratios", "credit_spreads_enabled", "whole_quantity", "time_in_force",
       "quote_freshness", "spread_quality", "quote_depth",
       "max_loss_per_trade", "equity_risk", "daily_loss_limit", "portfolio_exposure",
       "open_positions", "buying_power", "no_duplicate_order",
@@ -150,9 +151,9 @@ describe("evaluateRisk", () => {
     expect(failed(decision, "same_option_type")).toBeDefined();
   });
 
-  it("rejects a debit that is not below the strike width", () => {
+  it("rejects a premium that is not below the strike width", () => {
     paperEnv();
-    expect(failed(evaluateRisk({ ...riskBase, intent: intent({ limitPrice: 6, width: 5 }) }), "debit_below_width")).toBeDefined();
+    expect(failed(evaluateRisk({ ...riskBase, intent: intent({ limitPrice: 6, width: 5 }) }), "price_below_width")).toBeDefined();
   });
 
   it("rejects a fractional quantity", () => {
@@ -166,5 +167,57 @@ describe("evaluateRisk", () => {
     const decision = evaluateRisk({ ...riskBase, intent: poor });
     expect(decision.approved).toBe(true);
     expect(decision.checks.find((c) => c.name === "reward_risk")?.blocking).toBe(false);
+  });
+});
+
+describe("the engine guarantees definedness, independently of the selector", () => {
+  it("approves a clean credit spread when premium selling is enabled", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true", VOLGUARD_MAX_LOSS_PER_TRADE: "500" });
+    const decision = evaluateRisk({ ...riskBase, intent: creditIntent() });
+    expect(decision.reasons).toEqual([]);
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks a credit spread when premium selling is switched off", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "false", VOLGUARD_MAX_LOSS_PER_TRADE: "500" });
+    expect(failed(evaluateRisk({ ...riskBase, intent: creditIntent() }), "credit_spreads_enabled")).toBeDefined();
+  });
+
+  it("reserves margin for a credit spread, not its maximum loss", () => {
+    // Max loss $350 fits the buying power; the $500 width does not. Comparing max loss —
+    // as the gate used to — would under-reserve and let the order through.
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true", VOLGUARD_MAX_LOSS_PER_TRADE: "500" });
+    const poor = { ...account, buying_power: "400", cash: "400" };
+    const decision = evaluateRisk({ ...riskBase, account: poor, intent: creditIntent() });
+    expect(failed(decision, "buying_power")).toBeDefined();
+  });
+
+  it("rejects a tampered intent whose maximum loss does not exhaust the width", () => {
+    paperEnv({ VOLGUARD_SELL_PREMIUM_ENABLED: "true", VOLGUARD_MAX_LOSS_PER_TRADE: "500" });
+    // Understating max loss is how a naked or mis-sized structure would slip through.
+    const tampered = creditIntent({ maxLoss: 50 });
+    expect(failed(evaluateRisk({ ...riskBase, intent: tampered }), "max_loss_matches_width")).toBeDefined();
+  });
+
+  it("rejects a ratio spread, which is unbounded even though it is two legs", () => {
+    paperEnv();
+    const ratio = intent({
+      legs: [
+        leg({ symbol: "A", ratioQty: 1 }),
+        leg({ symbol: "B", side: "sell", positionIntent: "sell_to_open", strike: 105, ratioQty: 2 }),
+      ],
+    });
+    expect(failed(evaluateRisk({ ...riskBase, intent: ratio }), "equal_leg_ratios")).toBeDefined();
+  });
+
+  it("rejects two sold legs, which is naked however the selector labelled it", () => {
+    paperEnv();
+    const naked = intent({
+      legs: [
+        leg({ symbol: "A", side: "sell", positionIntent: "sell_to_open" }),
+        leg({ symbol: "B", side: "sell", positionIntent: "sell_to_open", strike: 105 }),
+      ],
+    });
+    expect(failed(evaluateRisk({ ...riskBase, intent: naked }), "defined_risk")).toBeDefined();
   });
 });

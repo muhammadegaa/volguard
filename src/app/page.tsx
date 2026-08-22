@@ -292,7 +292,7 @@ function SpreadSection({ run }: { run: AgentRun }) {
         </div>
 
         <div className="econ">
-          <div><label>Net debit</label><div className="v">{usd(i.limitPrice)}</div></div>
+          <div><label>Net {i.isCredit ? "credit" : "debit"}</label><div className="v">{usd(i.limitPrice)}</div></div>
           <div><label>Width</label><div className="v">{usd(i.width, 0)}</div></div>
           <div><label>Max loss</label><div className="v neg">{usd(i.maxLoss)}</div></div>
           <div><label>Max profit</label><div className="v pos">{usd(i.maxProfit)}</div></div>

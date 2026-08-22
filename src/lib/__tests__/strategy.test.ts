@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyEventRisk } from "../events";
+import { explainVerdict, verdictChip } from "../explain";
 import { decideStrategy } from "../strategy";
 import type { VolGuardConfig } from "../config";
 import type { MarketObservation, VolatilityState } from "../types";
@@ -8,6 +9,13 @@ const config = {
   maxEntryVrp: 0,
   maxEventScore: 60,
   maxJumpFraction: 0.35,
+  // Sell-side defaults, mirroring config.ts. Omitting them makes every threshold comparison
+  // against `undefined` quietly false, so the sell regime is never entered.
+  sellPremiumEnabled: false,
+  minSellVrp: 0.03,
+  maxSellEventScore: 25,
+  maxSellJumpFraction: 0.25,
+  sellMinTermSlope: 0,
 } as VolGuardConfig;
 
 function volatility(overrides: Partial<VolatilityState> = {}): VolatilityState {
@@ -163,5 +171,85 @@ describe("classifyEventRisk", () => {
       fresh("Apple CEO resigns"), fresh("Apple upgraded"),
     ];
     expect(classifyEventRisk({ symbol: "AAPL", news: everything, corporateActions: ["split"], now }).score).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("selling premium is gated harder than buying it", () => {
+  const rich = (over = {}) => observation({
+    volatility: volatility({ atmImpliedVol: 0.30, forecastVol: 0.24, varianceRiskPremium: 0.06, ...over }),
+  });
+
+  it("stays out of the sell regime entirely when the flag is off", () => {
+    const verdict = decideStrategy(rich(), { ...config, sellPremiumEnabled: false } as VolGuardConfig);
+    expect(verdict.strategy).toBe("no_trade");
+    expect(verdict.verdict).toMatch(/^IV rich/);
+  });
+
+  it("sells the side the underlying is less likely to reach", () => {
+    const cfg = { ...config, sellPremiumEnabled: true } as VolGuardConfig;
+    expect(decideStrategy(rich(), cfg).strategy).toBe("bull_put_credit_spread");
+    const bearish = observation({
+      trend: -0.02,
+      volatility: volatility({ atmImpliedVol: 0.30, forecastVol: 0.24, varianceRiskPremium: 0.06 }),
+    });
+    expect(decideStrategy(bearish, cfg).strategy).toBe("bear_call_credit_spread");
+  });
+
+  it("stands aside in the dead band between buying and selling", () => {
+    const cfg = { ...config, sellPremiumEnabled: true } as VolGuardConfig;
+    const marginal = observation({
+      volatility: volatility({ atmImpliedVol: 0.25, forecastVol: 0.244, varianceRiskPremium: 0.006 }),
+    });
+    const verdict = decideStrategy(marginal, cfg);
+    expect(verdict.strategy).toBe("no_trade");
+    expect(verdict.verdict).toMatch(/no VRP edge/);
+  });
+
+  // Each of these passes the buy-side threshold and fails the sell-side one. Selling into a
+  // catalyst is worse than buying into one, so the asymmetry is the point.
+  it("blocks an event score that buying would tolerate", () => {
+    const cfg = { ...config, sellPremiumEnabled: true, maxEventScore: 60, maxSellEventScore: 25 } as VolGuardConfig;
+    const withEvent = observation({
+      event: { severity: "low", score: 30, drivers: ["earnings in window"], newsCount: 1, matchedHeadlines: [], corporateActions: [] },
+      volatility: volatility({ atmImpliedVol: 0.30, forecastVol: 0.24, varianceRiskPremium: 0.06 }),
+    });
+    expect(decideStrategy(withEvent, cfg).verdict).toMatch(/event risk 30/);
+    // The same score with a cheap premium is a buy, and passes.
+    const cheap = observation({
+      event: withEvent.event,
+      volatility: volatility({ atmImpliedVol: 0.20, forecastVol: 0.26, varianceRiskPremium: -0.06 }),
+    });
+    expect(decideStrategy(cheap, cfg).strategy).toBe("bull_call_debit_spread");
+  });
+
+  it("blocks any backwardation at all on the sell side", () => {
+    const cfg = { ...config, sellPremiumEnabled: true, sellMinTermSlope: 0 } as VolGuardConfig;
+    const slightlyInverted = observation({
+      volatility: volatility({ atmImpliedVol: 0.30, forecastVol: 0.24, varianceRiskPremium: 0.06, termSlope: -0.01 }),
+    });
+    expect(decideStrategy(slightlyInverted, cfg).verdict).toBe("backwardation");
+    // −0.01 is inside the buy-side tolerance of −0.02.
+    const cheap = observation({
+      volatility: volatility({ atmImpliedVol: 0.20, forecastVol: 0.26, varianceRiskPremium: -0.06, termSlope: -0.01 }),
+    });
+    expect(decideStrategy(cheap, cfg).strategy).toBe("bull_call_debit_spread");
+  });
+
+  it("blocks a jump share that buying would tolerate", () => {
+    const cfg = { ...config, sellPremiumEnabled: true, maxJumpFraction: 0.35, maxSellJumpFraction: 0.25 } as VolGuardConfig;
+    const jumpy = observation({
+      volatility: volatility({ atmImpliedVol: 0.30, forecastVol: 0.24, varianceRiskPremium: 0.06, jumpFraction: 0.30 }),
+    });
+    expect(decideStrategy(jumpy, cfg).verdict).toMatch(/jump-contaminated/);
+  });
+
+  it("emits a verdict the interface can still parse", () => {
+    const cfg = { ...config, sellPremiumEnabled: true } as VolGuardConfig;
+    const verdict = decideStrategy(rich(), cfg).verdict;
+    // The legacy `IV rich` branch is unanchored; if it swallowed this, a trade would render
+    // as a skip.
+    expect(explainVerdict(verdict).headline).toMatch(/expensive/i);
+    expect(explainVerdict(verdict).tone).toBe("good");
+    expect(verdictChip(verdict).label).toBe("Sell premium");
   });
 });
