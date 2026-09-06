@@ -61,12 +61,17 @@ export async function GET() {
       note: "Connect the paper account to load performance from Alpaca.",
     },
     dailyLossUsed: 0,
-    // Only the newest run is ever rendered in detail, and per-symbol observations are the
-    // bulk of a run record — sending them for all ten made this an 84 KB response polled
-    // every thirty seconds.
-    recentRuns: recentRuns.map((run, index) =>
-      index === 0 ? run : { ...run, scanned: run.scanned.map((s) => ({ ...s, observation: null })) },
-    ),
+    // Only one run is ever rendered in detail, and per-symbol observations are the bulk of a
+    // run record — sending them for all ten made this an 84 KB response polled every thirty
+    // seconds. The one kept is the newest run that actually scanned, which is the one the
+    // dashboard displays: a run skipped by the lock carries no scan of its own, and stripping
+    // the run behind it left every evidence panel on screen blank.
+    recentRuns: (() => {
+      const keep = recentRuns.findIndex((run) => run.scanned.length > 0);
+      return recentRuns.map((run, index) =>
+        index === keep ? run : { ...run, scanned: run.scanned.map((s) => ({ ...s, observation: null })) },
+      );
+    })(),
     auditEvents,
     storage: (() => {
       const status = storageStatus();

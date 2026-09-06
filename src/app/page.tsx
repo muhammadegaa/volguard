@@ -658,6 +658,14 @@ export default function Terminal() {
   const [mode, setMode] = useState<"dry-run" | "paper">("dry-run");
   const [token, setToken] = useState("");
   const [toast, setToast] = useState("");
+  // The toast is a transient acknowledgement; the same message is on the decision card and in
+  // the ledger permanently. Left up, it covers the bottom of the page for the rest of the
+  // session — including a screen recording.
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 12_000);
+    return () => clearTimeout(timer);
+  }, [toast]);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [guided, setGuided] = useState(true);
@@ -1260,7 +1268,7 @@ export default function Terminal() {
         <div className="contextbar">
           <span className="thesis-line">
             Trades the <b>variance risk premium</b> — implied volatility against jump-robust realized —
-            and buys defined-risk debit spreads only when premium is cheap.
+            and trades defined-risk vertical spreads only when the premium is mispriced.
           </span>
           <div className="jobs">
             {[["01", "Evaluate"], ["02", "Propose"], ["03", "Reject"], ["04", "Execute"], ["05", "Monitor"], ["06", "Explain"]].map(([n, j]) => (

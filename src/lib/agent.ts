@@ -34,6 +34,18 @@ function event(runId: string, type: AuditEventType, message: string, data?: Reco
   return appendEvent({ id: randomUUID(), runId, createdAt: new Date().toISOString(), type, message, data });
 }
 
+/**
+ * A run message is read by a person, so the timestamps in one are written for a person. The
+ * UTC rendering is deliberate: the ledger is read from wherever the operator happens to be,
+ * and a server-local time would mean something different depending on where it was produced.
+ */
+function humanTime(iso: string | null | undefined): string {
+  if (!iso) return "an unknown time";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return `${date.toUTCString().slice(0, 22)} UTC`;
+}
+
 function isoDate(offsetDays = 0): string {
   const date = new Date();
   date.setUTCDate(date.getUTCDate() + offsetDays);
@@ -409,7 +421,7 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
     if (!clock.is_open) {
       const best = tradable[0];
       const thesis = await generateThesis(best.observation, best.verdict);
-      const message = `Market is closed, so no order was constructed. ${best.observation.symbol} is the standing candidate on last-session data; next open ${clock.next_open}. ${reviews.length} open leg(s) reviewed.`;
+      const message = `Market is closed, so no order was constructed. ${best.observation.symbol} is the standing candidate on last-session data; next open ${humanTime(clock.next_open)}. ${reviews.length} open leg(s) reviewed.`;
       return finish({
         status: "NO_TRADE",
         symbol: best.observation.symbol,
