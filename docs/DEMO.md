@@ -46,12 +46,14 @@ operator token on the clipboard if you intend to show paper execution.
 
 *Scroll to the expanded decision card.*
 
-> "Here's the whole watchlist scanned in one pass, and every symbol gets a verdict.
-> QQQ and NVDA — implied vol is rich, so we stand aside; we only ever buy premium.
-> SPY — event risk 69 out of 100, a catalyst is priced in, stand aside.
-> Whichever symbol shows `jump-contaminated` is rejected even though it looks like the
-> cheapest optionality on the board — most of its realized variance is one earnings gap that
-> already happened, and a move in the past is not a forecast."
+> "Here's the whole watchlist — fourteen symbols scanned in one pass, and every one gets a
+> verdict you can click into. Read the verdicts off the screen, not off this script; they
+> change every session. Most of them will say implied vol is rich, and as configured this
+> agent only buys premium, so those are stand-asides. Any symbol showing high event risk is
+> a catalyst already priced in — stand aside. And whichever symbol shows
+> `jump-contaminated` is rejected even though it may look like the cheapest optionality on
+> the board: most of its realized variance is one gap that already happened, and a move in
+> the past is not a forecast."
 
 *Point at the two figures in the answer card.*
 
@@ -62,20 +64,28 @@ operator token on the clipboard if you intend to show paper execution.
 
 ## 0:45–1:00 — The spread and the risk gates
 
-> "The agent goes to the live chain, targets delta 0.55 long and 0.27 short at 30 days, and
-> builds a defined-risk debit spread. Six dollars two cents debit, fifteen dollar width.
-> Max loss $602 — and that's not a stop, it's arithmetic; it's the most this position can
-> ever lose. Max profit $898. Quotes are two seconds old.
-> Then twenty-seven deterministic gates run. Quote freshness, spread width, displayed depth,
-> daily loss budget, portfolio exposure, duplicate order ID. The model can propose and it
-> can veto. Only this engine can approve."
+> "The agent goes to the live chain, targets delta 0.55 long and 0.27 short at thirty days,
+> and builds a defined-risk vertical. Read the debit, the width and the max loss off the
+> card. That max loss is not a stop — it's arithmetic. It's the most the position can ever
+> lose, and it's known before the order exists.
+> Then thirty deterministic checks run, twenty-seven of which can block. Quote freshness,
+> spread width, displayed depth, daily loss budget, portfolio exposure, duplicate order ID.
+> The model can propose and it can veto. Only this engine can approve."
+
+*If the run opened more than one position, click the second symbol.*
+
+> "And it doesn't stop at the best one. It works down the ranked list spending a single risk
+> budget, so each position is sized against what the earlier ones left — the portfolio
+> limits bind, not just the per-trade ones."
 
 ## 1:00–1:12 — Execution, exits, audit
 
-> "Dry run stops here — it read everything and submitted nothing. In paper mode this
-> submits one spread behind an operator token, idempotent by client order ID so a repeated
-> run can't double-fill. Every run also reviews open positions and closes at +50% of max
-> profit, −50% of premium, or seven days to expiry."
+> "Dry run stops here — it read everything and submitted nothing. In paper mode it submits
+> the approved spreads behind an operator token, idempotent by client order ID so a repeated
+> run can't double-fill. Every run also reviews open positions first, independently of
+> whether it finds anything new, and closes whole spreads at +50% of max profit, −50% of
+> premium, or seven days to expiry — both legs in one order, so a partial fill can never
+> leave a naked short."
 
 *Point at the audit ledger.*
 
@@ -91,9 +101,9 @@ operator token on the clipboard if you intend to show paper execution.
 
 ## 1:22–1:30 — Why this is an agent
 
-> "It decides *whether* to act, not just what to buy. On this run it looked at six symbols
-> and said no to five of them, each for a different, stated reason. Forced activity is a
-> bug. 'No trade' is the decision it's most often right about."
+> "It decides *whether* to act, not just what to buy. On this run it looked at fourteen
+> symbols and declined most of them, each for a different, stated reason. Forced activity is
+> a bug. 'No trade' is the decision it's most often right about."
 
 ---
 
@@ -107,6 +117,8 @@ appears in the position monitor with P&L sourced from Alpaca.
 
 - "Returns", "performance", or "backtested P&L". Say instead: "the volatility forecast is
   validated out of sample; the trading result is not backtested." Paper P&L is not a track
-  record.
+  record. If asked why there is no backtest, the answer is measured, not hedged: historical
+  option bars carry no implied volatility and expired contracts return no data at all, so
+  there is neither an entry signal nor a known outcome — the probe is in the repo.
 - Anything about profitability. The account is days old with a $0 P&L; say so if asked.
 - "Live trading". It is paper only and the adapter refuses non-paper hosts outright.

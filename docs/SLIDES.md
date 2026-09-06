@@ -24,8 +24,10 @@ Footer: paper trading only · no real capital · not investment advice
 - Implied = what the market **charges** for movement
 - Realized = what the underlying actually **delivered**
 - Usually positive → options are usually expensive → most people sell it
-- VolGuard only ever **buys** premium, and only when it is cheap
-- Rich premium → **abstain**, never invert into undefined risk
+- VolGuard buys premium when it is cheap, sells it when it is rich — **both inside a
+  defined risk**, never naked
+- The sell side ships **off** pending one live check of Alpaca's undocumented net-credit
+  limit-price sign, so as configured the agent is buy-only and rich premium → **abstain**
 
 ## 4 — The bug that became the strategy
 Two-column, before/after.
@@ -67,7 +69,8 @@ in `docs/RESEARCH.md` §7 with the Alpaca order ID.
 **Max loss is arithmetic, not a stop.** It is known before the order exists.
 
 ## 8 — The risk engine
-**27 deterministic gates.** The model may propose and may veto. Only the engine approves.
+**30 deterministic checks, 27 of them blocking.** The model may propose and may veto.
+Only the engine approves.
 environment · structure · quote freshness · spread · depth · per-trade cap · equity % ·
 daily loss budget · portfolio exposure · position count · buying power · duplicate order ID
 
@@ -75,11 +78,16 @@ Live scan: 14 symbols, each screened for options liquidity before it enters the 
 an abstention with a stated reason for most of them → the survivors ranked, then allocated
 to in order until the daily loss budget, the portfolio cap or the position count runs out.
 
+Every limit is range-checked when it is read. A malformed or out-of-range value refuses the
+run and names the variable — a limit that does not mean what was written is worse than no
+limit, because the gates report it as passed.
+
 ## 9 — Agent, not chatbot
 - Decides **whether** to act, not just what to buy
 - Scheduled loop: interval gate · market-hours check · single-run lock · timeout · kill switch
 - Idempotent orders by deterministic client order ID
-- Monitors positions and exits at +50% / −50% / 7 DTE
+- Monitors positions and exits at +50% / −50% / 7 DTE, closing a spread as one order so a
+  partial fill cannot leave a naked short
 - Official Alpaca **MCP server**: 74 tools, read-only, evidenced in the ledger
 - Append-only audit ledger on every observation, gate, order and skip
 
@@ -87,6 +95,8 @@ to in order until the daily loss budget, the portfolio cap or the position count
 **What is real:** live Alpaca paper data · real IV and greeks · every number sourced
 **What is not claimed:** no P&L backtest · no track record · paper fills are optimistic
 *(the volatility forecast is validated walk-forward — the trading result is not)*
+*(and the backtest is absent because it was measured as impossible: historical option bars
+carry no implied volatility, expired contracts return nothing — the probe is in the repo)*
 **What is disclosed:** indicative feed (no OPRA) · no VIX on this plan · open interest often null
 
 > The hardest thing an agent can do is decline to act.

@@ -4,7 +4,7 @@
 
 VolGuard compares what the option market *charges* for movement (implied volatility) against
 what the underlying has actually *delivered* (realized volatility). When premium is cheap
-and no known catalyst explains it, the agent buys a defined-risk debit spread on Alpaca
+and no known catalyst explains it, the agent buys a defined-risk vertical spread on Alpaca
 paper. Any other time it does the harder thing and stays out — and writes down why.
 
 Built for the [Alpaca AI Trading Agents Hackathon](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon),
@@ -20,19 +20,27 @@ costume. VolGuard trades the quantity options actually price: **the variance ris
 the gap between implied and realized volatility. That premium is usually positive — options
 are typically expensive — which is why most people sell it. VolGuard only ever *buys*
 premium, and only on the comparatively rare occasions when it is negative. When premium is
-rich, the correct action is to abstain, not to invert into a risk it cannot define. This is
-why "no trade" is the most common output, and why that is a feature rather than a bug.
+rich, the honest options are to abstain or to sell it inside a *defined* risk — never to
+take on a risk that cannot be bounded before the order exists. This is why "no trade" is the
+most common output, and why that is a feature rather than a bug.
+
+The selector, the strategy layer and the risk engine all handle credit verticals, with
+strictly tighter gates on that side because the rich implied volatility being sold is
+compensation for a catalyst rather than a mispricing. It ships **off**
+(`VOLGUARD_SELL_PREMIUM_ENABLED=false`) pending a live check of Alpaca's undocumented sign
+convention for a net-credit multi-leg limit price, so as configured the agent is buy-only.
 
 ## What it does, every run
 
 | # | Job | Detail |
 |---|---|---|
 | 1 | **Evaluate** | Scores volatility and event risk across the whole watchlist |
-| 2 | **Propose** | Selects a delta-targeted, defined-risk debit spread from the live chain |
+| 2 | **Propose** | Selects delta-targeted, defined-risk vertical spreads from the live chain |
 | 3 | **Reject** | Blocks weak, illiquid, stale or over-sized setups before they exist |
-| 4 | **Execute** | Submits only approved orders, paper-only, idempotent by client order ID |
-| 5 | **Monitor** | Reviews open legs each run; closes on profit target, stop, or time stop |
-| 6 | **Explain** | Writes every observation, gate and order to an append-only ledger |
+| 4 | **Allocate** | Works down the ranked candidates, spending one budget until a limit binds |
+| 5 | **Execute** | Submits only approved orders, paper-only, idempotent by client order ID |
+| 6 | **Monitor** | Reviews open positions each run; closes whole spreads on profit target, stop, or time stop |
+| 7 | **Explain** | Writes every observation, gate and order to an append-only ledger |
 
 ## The volatility engine
 
@@ -233,8 +241,11 @@ dominate). Exit orders are idempotent per leg per day.
                                             ▼
                         ┌──────────────────────────────────────────┐
                         │  chain.ts    delta-targeted candidate     │
-                        │              search → debit spread        │
-                        │  risk.ts     27 deterministic gates       │
+                        │              search → vertical spread     │
+                        │  allocation  spend one budget down the    │
+                        │              ranked list, then commit it  │
+                        │  risk.ts     30 checks, 27 of them        │
+                        │              blocking                     │
                         └───────────────────┬──────────────────────┘
                                             ▼
                         ┌──────────────────────────────────────────┐
@@ -384,17 +395,20 @@ is safe to call more often than intended and safe to call twice at once:
 - single-run lock with a stale-lock timeout, so runs cannot overlap
 - run timeout, retries with backoff, and an audit event for every outcome including skips
 
-`vercel.json` ships a cron at `*/15 14-20 * * 1-5` (UTC, ≈ US market hours). Any scheduler
-works — GitHub Actions, a container cron, or `watch curl`.
+`vercel.json` ships a daily cron at `0 14 * * 1-5`, because Vercel's Hobby plan permits only
+one run per day. The real cadence lives in `.github/workflows/scheduled-run.yml`, which calls
+the same endpoint every 15 minutes during US market hours — the endpoint owns the interval
+gate, the run lock and every other guard, so the scheduler is interchangeable. Any of them
+works: GitHub Actions, a container cron, or `watch curl`.
 
 ## Testing
 
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint
-npm test            # vitest — 253 unit tests across 13 files
+npm test            # vitest — 308 unit tests across 15 files
 npm run build       # next build
-npm run test:e2e    # playwright — 34 tests
+npm run test:e2e    # playwright — 36 tests (some skip when the market is closed)
 npm run backtest    # walk-forward validation of the volatility forecast
 ```
 
@@ -410,14 +424,12 @@ These are real, verified, and none of them are worked around by faking data.
   computes its own ATM IV term structure from the chain instead.
 - **Open interest is frequently `null`** from Alpaca, so it is an advisory check only.
   Liquidity gating uses quote size and relative spread, which are always present.
-- **Implied-vol rank needs 20 sessions** of self-collected history and shows
-  `building (n obs)` until then, rather than a fabricated number.
-- **The MCP bridge needs `uv` on the host.** It works locally and on any container host; it
-  will not work on Vercel's serverless runtime. The REST adapter is the execution path in
-  every environment, and MCP is a verified read-only inspection channel.
-- **No P&L backtest.** There is no historical implied-volatility series available, so the
-  trade leg of the variance risk premium is unvalidated and no simulated P&L is claimed
-  anywhere. The volatility *forecast* is a different matter: it is validated walk-forward,
+- **No P&L backtest.** Measured, not assumed: a historical option bar carries trade OHLC
+  only — no bid, no ask, no greeks, no implied volatility — and expired contracts return no
+  data at all, so there is neither an entry signal nor a known outcome to score it against.
+  The probe and the full reasoning are in `docs/evidence/backtest-feasibility.md`
+  (`node --env-file=.env.local scripts/probe-option-history.mjs`). No simulated P&L is
+  claimed anywhere. The volatility *forecast* is a different matter: it is validated walk-forward,
   strictly out of sample, and the evidence is committed (`npm run backtest`,
   `docs/evidence/forecast-validation.md`). Reported P&L comes only from the live paper account via
   Alpaca portfolio history and fill activities. There are no simulated results anywhere.

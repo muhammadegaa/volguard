@@ -70,7 +70,7 @@ risk decision with all gates, the order intent, any Alpaca order IDs, and positi
 - Jump share ≤ `VOLGUARD_MAX_JUMP_FRACTION` (default 0.35)
 - Event score < `VOLGUARD_MAX_EVENT_SCORE` (default 60)
 - Term structure not in backwardation beyond −2 vol points
-- A tradable debit spread exists that clears every liquidity gate
+- A tradable vertical spread exists that clears every liquidity gate
 - Position size ≥ 1 whole contract under all money limits
 
 **Direction** comes from spot vs the 20-day average, confirmed by 25-delta skew.

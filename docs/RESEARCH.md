@@ -176,11 +176,20 @@ VolGuard uses bipower to compute the jump share, and prices the VRP against a
 horizon-matched **forecast** of realized volatility (see §6). It additionally abstains outright when the
 jump share exceeds 35%. MSFT is now correctly rejected as `jump-contaminated (49%)`.
 
-**Why debit spreads only.** Max loss equals the premium paid and is known before the order
-is built — there is no assignment tail and no margin surprise. It is also the safest subset
-of what Alpaca level 3 permits. The cost is that VolGuard cannot express a "sell expensive
-premium" view, which is precisely why rich IV maps to *abstain* rather than to an inverted
-trade.
+**Why debit spreads only** *(superseded — see the note below)*. Max loss equals the premium
+paid and is known before the order is built — there is no assignment tail and no margin
+surprise. It is also the safest subset of what Alpaca level 3 permits. The cost is that
+VolGuard cannot express a "sell expensive premium" view, which is precisely why rich IV maps
+to *abstain* rather than to an inverted trade.
+
+> **Superseded 2026-08-24.** The reasoning above is right about naked short options and wrong
+> to conclude that only debits are defined-risk. A credit vertical's maximum loss is the
+> strike width less the credit collected — equally known before the order exists, and the
+> risk engine now verifies arithmetically that max loss plus max profit equals the width for
+> either structure. Since the premium is positive most of the time, abstaining in the common
+> regime meant trading only a rare tail. VolGuard now trades both sides, with strictly
+> tighter gates on the sell side, behind `VOLGUARD_SELL_PREMIUM_ENABLED` — which remains off
+> pending a live check of Alpaca's undocumented net-credit limit-price sign convention.
 
 ---
 
