@@ -1,7 +1,7 @@
 # Final Submission Checklist
 
-Status as of **6 Sept 2026**. Event deadline was 4 Sept 2026, 15:00 UTC — see
-"Timing" at the bottom.
+Status as of **6 Sept 2026**. **The event has finished** — see "Timing" at the bottom before
+spending time on anything in the last two sections.
 
 ## Product — done
 
@@ -68,11 +68,13 @@ Status as of **6 Sept 2026**. Event deadline was 4 Sept 2026, 15:00 UTC — see
 
 ## Blocked on the operator
 
-- [ ] Confirm whether a fresh, dedicated Alpaca paper account is required. The rule was
-      recorded from the lablab page in `RESEARCH.md` §1, which is a SPA and was read once;
-      it has not been re-checked and the current dev account is not a fresh one.
-- [ ] If it is required: create it, put the new keys + account ID in `.env.local` and the
-      deployment env, and repeat a controlled paper order on it.
+- [x] ~~Confirm whether a fresh Alpaca paper account is required.~~ **Confirmed 6 Sept 2026**
+      by reading the official page directly: "create a brand-new Alpaca paper trading account
+      dedicated to this hackathon. Projects run on an existing or reused account will not be
+      eligible for judging." Development on any account is explicitly allowed. The starting
+      balance must also be set to **$100,000**.
+- [ ] Create it, put the new keys + account ID in `.env.local` and the deployment env, and
+      repeat a controlled paper order on it.
       (Done on the DEV account: order `6231e8dd-3198-4b55-973b-d98c1f483d52`, filled 1 lot
       @ $5.65, idempotency re-verified.)
 - [ ] Fund the Anthropic account, or accept the labelled rules-engine thesis for the demo.
@@ -95,6 +97,7 @@ Status as of **6 Sept 2026**. Event deadline was 4 Sept 2026, 15:00 UTC — see
 - [x] Title: **VolGuard**
 - [x] Tagline: *Buy movement only when it's cheap.*
 - [x] Short + long description — see `docs/SUBMISSION_COPY.md`.
+- [x] One-page write-up (AI logic · risk gates · Alpaca infrastructure) — `docs/WRITEUP.md`.
 - [x] Track: Volatility trading (options).
 - [x] Tags: AI Agents · Algorithmic Trading · Options Trading · FinTech · Alpaca · Next.js · TypeScript · Anthropic · MCP
 - [x] Public GitHub repository URL — <https://github.com/muhammadegaa/volguard>.
@@ -107,7 +110,16 @@ Status as of **6 Sept 2026**. Event deadline was 4 Sept 2026, 15:00 UTC — see
 
 ## Timing
 
-The deadline recorded in `RESEARCH.md` §1 is **4 Sept 2026, 15:00 UTC**, which has passed.
-Nothing in this repository depends on that date — the agent, the evidence and the dashboard
-stand on their own — but the submission fields above cannot be completed against a closed
-entry. Re-check the event page before spending time on the video, slides and social posts.
+**The event is over.** The lablab page was read directly on 6 Sept 2026 and shows "This Event
+Has Finished", with finalist selection under way: 3,602 participants, 1,269 teams, 427
+applications submitted. Submissions closed 4 Sept 2026 at 16:00 BST (15:00 UTC).
+
+So the last two sections above are no longer actionable for *this* event. Nothing in the
+repository depends on that date — the agent, the evidence, the write-up and the dashboard
+stand on their own, and the deployment path is complete and tested. What is left is a choice
+about where this goes next, not a deadline.
+
+Two things also came out of that reading that the earlier notes had wrong, both recorded in
+`RESEARCH.md` §1: the prize pool was $6,300 rather than $5,000, and **social engagement is a
+scored judging criterion**, which this checklist and the research log had previously
+concluded it was not.

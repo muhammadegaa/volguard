@@ -414,6 +414,10 @@ npm run backtest    # walk-forward validation of the volatility forecast
 
 If port 3000 is occupied: `PLAYWRIGHT_PORT=3457 npm run test:e2e`.
 
+## One-page write-up
+
+`docs/WRITEUP.md` — the AI logic, the risk gates and the Alpaca infrastructure in one page.
+
 ## Honest limitations
 
 These are real, verified, and none of them are worked around by faking data.

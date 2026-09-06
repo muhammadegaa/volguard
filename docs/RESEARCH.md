@@ -11,11 +11,28 @@ a request failed, the failure is recorded rather than omitted.
 
 Primary source: <https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon>
 
-**Caveat on sourcing.** The lablab event page is client-rendered; a plain HTTP fetch returns
-only the page shell, so the detail below is corroborated from the lablab live dashboard
-(<https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon/live>) and a third-party
-mirror (<https://hiretoday.in/competitiondetails/40000151>). **Re-verify the exact wording on
-the official page at registration** before relying on it for the submission.
+**Sourcing — resolved 6 Sept 2026.** The earlier version of this section was assembled from
+a third-party mirror because the event page is client-rendered and a plain HTTP fetch returns
+only the shell. It has now been read directly in a browser. The corrections below are what
+that changed, and they matter: two of them were wrong.
+
+- **Prize pool is $6,300**, not the $5,000 taken from the mirror.
+- **Social engagement IS a scored criterion**, not merely a submission field. This section
+  previously said the opposite and flagged it as unverified; the official page lists it under
+  JUDGING CRITERIA with its own description, scoring "both the quality of the content and the
+  engagement it generates".
+- **The competition account's starting balance must be set to $100,000.** This requirement
+  appears nowhere in the earlier notes.
+- **A one-page write-up is required**, covering AI logic, risk gates and Alpaca
+  infrastructure implementation. Format is free — a slide, a section of the project
+  description, or a page in the repository. Written as `docs/WRITEUP.md`.
+- The **fresh-account rule is confirmed verbatim**: "create a brand-new Alpaca paper trading
+  account dedicated to this hackathon. Projects run on an existing or reused account will not
+  be eligible for judging." Development on any account is explicitly permitted.
+
+**The event has finished.** Submissions closed 4 Sept 2026, 16:00 BST (15:00 UTC), and the
+page now reads "This Event Has Finished" with finalist selection in progress: 3,602
+participants, 1,269 teams, 427 applications submitted.
 
 | Item | Verified value |
 |---|---|
@@ -24,7 +41,7 @@ the official page at registration** before relying on it for the submission.
 | Registration opens | 28 Aug 2026, 15:00 UTC |
 | Event runs | 28 Aug 2026 → 4 Sept 2026 |
 | Submission deadline | 4 Sept 2026, 15:00 UTC |
-| Prize pool | $5,000 — 1st $2,500 · 2nd $1,500 · 3rd $1,000 |
+| Prize pool | $6,300 (the $5,000 previously recorded here came from the mirror and was wrong) |
 | Registration fee | Free |
 | Contact | community@lablab.ai |
 
@@ -37,20 +54,20 @@ the official page at registration** before relying on it for the submission.
 - Projects run in the **paper trading environment**.
 - Final submission requires a **new, dedicated Alpaca paper trading account**. Projects
   submitted on an existing or reused account are **not eligible for judging**.
+- The competition account's **starting balance must be set to $100,000**.
+- A **one-page write-up** covering AI logic, risk gates and Alpaca infrastructure.
 - Submissions must be original and MIT-compliant.
-- Up to **five** social media post links may be submitted.
+- Up to **five** social media post links may be submitted, and they are **scored**.
 
-**Judging criteria (as listed on the mirror):**
+**Judging criteria — read from the official page, 6 Sept 2026:**
 
-1. P&L Performance
-2. Technology Implementation
-3. Creativity & Originality
-4. Presentation & Execution
-
-> Note: earlier project notes listed a fifth "Social Engagement" criterion. That is **not**
-> confirmed by the sources available. Social posts are a *submission field* (up to five
-> links); whether they are separately scored is unverified. Treat social as a submission
-> asset, not a confirmed scoring axis, until the official page is checked.
+1. **P&L Performance** — the agent's trading performance in the Alpaca paper environment.
+2. **Technology Implementation** — how effectively the project uses Alpaca's Trading API,
+   MCP server, CLI and the other required technologies.
+3. **Creativity & Originality** — of the concept, the strategy, and the agent's behaviour.
+4. **Presentation & Execution** — how clearly the project communicates its idea, demonstrates
+   the agent in action, and presents the reasoning behind its strategy and results.
+5. **Social engagement** — quality of the content *and* the engagement it generates.
 
 **Tracks / categories:** Artificial Intelligence · Algorithmic Trading · AI Agents ·
 FinTech · Options Trading. The event description states tracks "cover options alpha,
