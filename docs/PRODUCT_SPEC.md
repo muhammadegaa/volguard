@@ -98,6 +98,11 @@ deterministic in symbol, strategy and date.
 
 ## Safety policy
 
+- Every numeric setting is range-checked when it is read. A value that does not parse, falls
+  outside its range, or contradicts another setting refuses the whole run and names the
+  variable — it is never quietly replaced by a default, because a limit that does not mean
+  what was written is worse than no limit: the gates report it as passed. `/api/health`
+  reports the same list and returns 503 while any of it stands.
 - Paper trading only. The adapter refuses to contact a non-paper host at all, even for reads.
 - The connected account ID must match `ALPACA_ACCOUNT_ID` before execution.
 - Options trading level must be ≥ 3.

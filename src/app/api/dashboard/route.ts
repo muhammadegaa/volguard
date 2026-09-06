@@ -72,6 +72,7 @@ export async function GET() {
       const status = storageStatus();
       return { durable: status.durable, ephemeral: status.ephemeral, lastError: status.lastError };
     })(),
+    configIssues: config.issues,
     mcp: getMcpBridgeStatus(),
     limits: {
       maxLossPerTrade: config.maxLossPerTrade,

@@ -333,6 +333,11 @@ export interface DashboardSnapshot {
   schedule: { enabled: boolean; intervalMinutes: number; lastRunAt: string | null; nextEligibleAt: string | null };
   /** Where the ledger is kept and whether it survives a restart. Surfaced, never implied. */
   storage: { durable: boolean; ephemeral: boolean; lastError: string | null };
+  /**
+   * Settings that failed validation. Non-empty means the agent will refuse every run, so it
+   * is shown rather than left to be discovered by a run that does nothing.
+   */
+  configIssues: Array<{ variable: string; detail: string }>;
   account: {
     id: string | null;
     accountNumber: string | null;

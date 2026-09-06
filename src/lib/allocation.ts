@@ -128,6 +128,7 @@ export function planAllocation(input: AllocationInput): Decision[] {
 
     const risk = evaluateRisk({
       account,
+      config,
       openPositionCount,
       openRiskDollars,
       dailyLossUsed,

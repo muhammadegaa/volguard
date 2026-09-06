@@ -1,3 +1,4 @@
+import { getConfig } from "../config";
 import type { AlpacaAccount, AlpacaBar, OptionLeg, OrderIntent } from "../types";
 import type { ChainRow } from "../volatility";
 
@@ -117,14 +118,19 @@ export function intent(overrides: Partial<OrderIntent> = {}): OrderIntent {
   };
 }
 
-export const riskBase = {
+/**
+ * A function, not a constant: `config` has to be read after the test has set its environment,
+ * and a module-level constant would snapshot it at import time.
+ */
+export const riskBase = () => ({
   account,
+  config: getConfig(),
   openPositionCount: 0,
   openRiskDollars: 0,
   dailyLossUsed: 0,
   duplicateClientOrderId: false,
   marketOpen: true,
-};
+});
 
 /** Config env for a compliant paper account. Callers are responsible for restoring env. */
 export function paperEnv(extra: Record<string, string> = {}) {

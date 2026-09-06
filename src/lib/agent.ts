@@ -289,6 +289,14 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
   if (config.killSwitch) {
     return finish({ status: "TRADE_REJECTED", message: "Global kill switch is enabled; no order can be considered." });
   }
+  // A limit that does not mean what the operator wrote is worse than no limit, because the
+  // engine reports it as passed. Nothing is scanned or sized until the settings are sound.
+  if (config.issues.length > 0) {
+    return finish({
+      status: "CONFIGURATION_REQUIRED",
+      message: `Configuration is invalid, so no position can be sized: ${config.issues.map((issue) => `${issue.variable} — ${issue.detail}`).join("; ")}`,
+    });
+  }
   if (!isConfigured()) {
     return finish({
       status: "CONFIGURATION_REQUIRED",

@@ -21,6 +21,7 @@ const INITIAL: DashboardSnapshot = {
   killSwitch: false,
   schedule: { enabled: false, intervalMinutes: 15, lastRunAt: null, nextEligibleAt: null },
   storage: { durable: true, ephemeral: false, lastError: null },
+  configIssues: [],
   account: { id: null, accountNumber: null, status: null, equity: null, cash: null, buyingPower: null, optionsLevel: null, idVerified: false },
   clock: { isOpen: null, nextOpen: null, nextClose: null },
   positions: [],
@@ -109,6 +110,26 @@ function GlossaryPanel({ termKey, onClose }: { termKey: TermKey | "all" | null; 
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A settings error stops every run before it starts, and the only other symptom is an agent
+ * that quietly does nothing. It gets a banner rather than a line in a rail for that reason.
+ */
+function ConfigBanner({ issues }: { issues: DashboardSnapshot["configIssues"] }) {
+  if (issues.length === 0) return null;
+  return (
+    <div className="config-banner" role="alert">
+      <b>Settings are invalid, so no position can be sized.</b>
+      <ul>
+        {issues.map((issue) => (
+          <li key={`${issue.variable}-${issue.detail}`}>
+            <code>{issue.variable}</code> — {issue.detail}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -824,6 +845,7 @@ export default function Terminal() {
         ["Schedule", data.schedule.enabled, data.schedule.enabled ? `${data.schedule.intervalMinutes}m` : "manual"],
         ["MCP server", data.mcp.available, data.mcp.available ? `${data.mcp.toolCount} tools` : "not probed"],
         ["Ledger", data.storage.durable, data.storage.durable ? (data.storage.ephemeral ? "this instance" : "persisted") : "memory only"],
+        ["Settings", data.configIssues.length === 0, data.configIssues.length === 0 ? "in range" : `${data.configIssues.length} invalid`],
       ] as const).map(([k, ok, v]) => (
         <div className="health-row" key={k}>
           <span className="k">{k}</span>
@@ -916,6 +938,7 @@ export default function Terminal() {
           </header>
 
           <main className="gmain" id="decision">
+            <ConfigBanner issues={data.configIssues} />
             {!shown || showIntro ? (
               <Intro
                 onRun={run}
@@ -1245,6 +1268,8 @@ export default function Terminal() {
             ))}
           </div>
         </div>
+
+        <ConfigBanner issues={data.configIssues} />
 
         <div className="workspace">
           <div className="pane left">

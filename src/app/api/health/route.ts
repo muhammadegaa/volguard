@@ -38,6 +38,15 @@ export async function GET(request: Request) {
         ok: true,
         detail: config.killSwitch ? "Engaged — all orders blocked" : "Clear",
       },
+      // A malformed or out-of-range limit is a readiness failure, not a warning: the agent
+      // refuses to size anything until it is corrected, so an instance carrying one cannot
+      // trade however healthy the rest of it looks.
+      settings: {
+        ok: config.issues.length === 0,
+        detail: config.issues.length === 0
+          ? "All limits parse and are within range"
+          : config.issues.map((issue) => `${issue.variable}: ${issue.detail}`).join("; "),
+      },
     };
 
     if (deep && configured) {

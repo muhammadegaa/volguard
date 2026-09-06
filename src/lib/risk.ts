@@ -1,8 +1,14 @@
-import { getConfig } from "./config";
+import type { VolGuardConfig } from "./config";
 import type { AlpacaAccount, OrderIntent, RiskCheck, RiskDecision } from "./types";
 
 export interface RiskInput {
   account: AlpacaAccount;
+  /**
+   * Passed in rather than read from the environment here, so the gates are measured against
+   * the same snapshot the allocator sized against and a test can vary one limit without
+   * mutating `process.env`.
+   */
+  config: VolGuardConfig;
   openPositionCount: number;
   /** Sum of remaining defined risk across open VolGuard spreads, in dollars. */
   openRiskDollars: number;
@@ -22,7 +28,7 @@ export interface RiskInput {
  * list is a bug, and the unit tests assert the full set is present.
  */
 export function evaluateRisk(input: RiskInput): RiskDecision {
-  const config = getConfig();
+  const { config } = input;
   const checks: RiskCheck[] = [];
   const add = (name: string, passed: boolean, detail: string, blocking = true) =>
     checks.push({ name, passed, detail, blocking });

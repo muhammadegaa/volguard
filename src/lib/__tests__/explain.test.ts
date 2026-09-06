@@ -144,7 +144,7 @@ describe("explainGate", () => {
   beforeEach(() => paperEnv());
 
   it("gives a plain-language label to every gate the risk engine emits", () => {
-    const decision = evaluateRisk({ ...riskBase, intent: intent() });
+    const decision = evaluateRisk({ ...riskBase(), intent: intent() });
     for (const check of decision.checks) {
       const label = explainGate(check.name);
       expect(label, `gate without a plain label: ${check.name}`).not.toBe(check.name.replace(/_/g, " "));
@@ -153,7 +153,7 @@ describe("explainGate", () => {
   });
 
   it("has no stale labels for gates that no longer exist", () => {
-    const live = new Set(evaluateRisk({ ...riskBase, intent: intent() }).checks.map((c) => c.name));
+    const live = new Set(evaluateRisk({ ...riskBase(), intent: intent() }).checks.map((c) => c.name));
     expect(gateLabelCount()).toBe(live.size);
   });
 

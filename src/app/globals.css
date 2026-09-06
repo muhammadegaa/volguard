@@ -1063,3 +1063,28 @@ body[data-view="light"] { background: var(--paper); }
 @media (prefers-reduced-motion: no-preference) {
   .sc-bar { transition: opacity .12s ease; }
 }
+
+/* ── Invalid settings ──────────────────────────────────────────
+   Rendered in both views, so it defines its own colours rather than borrowing tokens whose
+   meaning flips between the dark terminal and the light guided palette. */
+.config-banner {
+  margin: 12px 16px;
+  padding: 12px 14px;
+  border: 1px solid #b42318;
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: #fdeceb;
+  color: #6b1611;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.config-banner ul { margin: 6px 0 0; padding-left: 18px; }
+.config-banner li { margin-top: 2px; }
+.config-banner code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  background: #ffffff;
+  border: 1px solid #f0c6c2;
+  border-radius: 3px;
+  padding: 0 4px;
+}
