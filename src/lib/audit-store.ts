@@ -118,8 +118,19 @@ function stripObservations(run: AgentRun): AgentRun {
 
 export async function saveRun(run: AgentRun): Promise<void> {
   await withStore((data) => {
-    const previous = data.runs.filter((item) => item.id !== run.id).map(stripObservations);
-    data.runs = [run, ...previous].slice(0, 100);
+    const previous = data.runs.filter((item) => item.id !== run.id);
+    // The observations are kept on the newest run that actually scanned something, not
+    // simply on the newest run. A run skipped by the lock, or one that failed before the
+    // scan, carries no observations of its own; stripping the run behind it left the
+    // dashboard displaying a scan with every evidence panel blank.
+    let keptScan = run.scanned.length > 0;
+    data.runs = [run, ...previous.map((item) => {
+      if (!keptScan && item.scanned.length > 0) {
+        keptScan = true;
+        return item;
+      }
+      return stripObservations(item);
+    })].slice(0, 100);
   }, undefined);
 }
 

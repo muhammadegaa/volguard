@@ -72,7 +72,8 @@ environment · structure · quote freshness · spread · depth · per-trade cap 
 daily loss budget · portfolio exposure · position count · buying power · duplicate order ID
 
 Live scan: 14 symbols, each screened for options liquidity before it enters the watchlist →
-an abstention with a stated reason for most of them → at most one trade.
+an abstention with a stated reason for most of them → the survivors ranked, then allocated
+to in order until the daily loss budget, the portfolio cap or the position count runs out.
 
 ## 9 — Agent, not chatbot
 - Decides **whether** to act, not just what to buy

@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   GLOSSARY,
   briefDecision,
+  decisionsOf,
   explainEventSeverity,
   explainGate,
   explainStatus,
@@ -123,10 +124,12 @@ function Universe({ run, selected, guided, onSelect }: {
   if (rows.length === 0) {
     return <p className="pane-empty">No scan yet. Run the agent to evaluate the watchlist.</p>;
   }
+  // A run opens as many positions as its budget allows, so "traded" is a set, not one symbol.
+  const opened = new Set(decisionsOf(run).filter((d) => d.orderIntent && d.status === "TRADE_APPROVED").map((d) => d.symbol));
   return (
     <ul className="universe">
       {rows.map((row) => {
-        const traded = row.symbol === run?.symbol && run?.orderIntent !== null;
+        const traded = opened.has(row.symbol);
         const chip = verdictChip(row.verdict);
         const isSelected = row.symbol === selected;
         return (
@@ -742,8 +745,18 @@ export default function Terminal() {
       ?? null;
   }, [shown, selected]);
   const selectedSymbol = selectedScan?.symbol ?? shown?.symbol ?? null;
-  /** True when the viewed symbol is the one the run acted on, so a decision exists for it. */
-  const isChosen = Boolean(shown && selectedSymbol === shown.symbol);
+  /**
+   * A run now holds one decision per candidate it allocated to, so the panels below follow
+   * the selected symbol rather than the run's primary. `view` is the run as it applies to
+   * that symbol: run-level facts, that symbol's outcome.
+   */
+  const selectedDecision = useMemo(
+    () => decisionsOf(shown).find((d) => d.symbol === selectedSymbol) ?? null,
+    [shown, selectedSymbol],
+  );
+  const view = shown && selectedDecision ? { ...shown, ...selectedDecision } : shown;
+  /** True when the viewed symbol is one the run acted on, so a decision exists for it. */
+  const isChosen = Boolean(selectedDecision);
 
   const paperArmed = mode === "paper";
   const blocked = paperArmed && (!token || !data.account.idVerified || data.killSwitch);
@@ -861,18 +874,18 @@ export default function Terminal() {
 
   // ── Guided: light, calm, one answer at a time ────────────────────────────
   if (guided) {
-    const intent = isChosen ? shown?.orderIntent ?? null : null;
-    const gateChecks = isChosen ? shown?.risk?.checks ?? [] : [];
+    const intent = view?.orderIntent ?? null;
+    const gateChecks = view?.risk?.checks ?? [];
     const gatesPassed = gateChecks.filter((c) => c.passed).length;
     // A symbol the agent skipped has no decision, only a reason. Say that rather than
     // showing the chosen symbol's verdict under someone else's ticker.
     const skipped = selectedScan ? explainVerdict(selectedScan.verdict) : null;
-    const brief = isChosen && shown
-      ? briefDecision(shown)
+    const brief = isChosen && view
+      ? briefDecision(view)
       : skipped
         ? { headline: `${selectedSymbol} — ${skipped.headline.replace(/^(Skipped|Candidate) — /, "")}`, line: skipped.detail, tone: skipped.tone }
         : null;
-    const vol = selectedScan?.observation?.volatility ?? (isChosen ? shown?.observation?.volatility : undefined);
+    const vol = selectedScan?.observation?.volatility ?? view?.observation?.volatility;
     const vrp = vol?.varianceRiskPremium ?? null;
     const cheap = vrp !== null && vrp < 0;
     const candidates = shown?.scanned.filter((s) => /^IV cheap/.test(s.verdict)).length ?? 0;
@@ -1114,8 +1127,8 @@ export default function Terminal() {
 
                   <Disclose title="Every number, unabridged" className="pro-peek">
                     <VolatilitySection observation={selectedScan?.observation ?? null} />
-                    {isChosen && <SpreadSection run={shown} />}
-                    {isChosen && <ThesisSection run={shown} guided />}
+                    {isChosen && view && <SpreadSection run={view} />}
+                    {isChosen && view && <ThesisSection run={view} guided />}
                   </Disclose>
 
                   <Disclose title={`Activity log (${data.auditEvents.length})`}>
@@ -1249,18 +1262,18 @@ export default function Terminal() {
               <>
                 <div className="decision-head">
                   <h1>{selectedSymbol ?? shown.symbol ?? "System"}</h1>
-                  <span className={`status-tag s-${shown.status.toLowerCase()}`}>{shown.status.replace(/_/g, " ")}</span>
+                  <span className={`status-tag s-${(view ?? shown).status.toLowerCase()}`}>{(view ?? shown).status.replace(/_/g, " ")}</span>
                   <span className="tag">{shown.mode}</span>
                   <span className="tag">{shown.trigger}</span>
                   <span className="meta">{ts(shown.finishedAt)} · {(shown.durationMs / 1000).toFixed(1)}s</span>
                 </div>
                 <p className="decision-msg">
-                  {isChosen ? shown.message : `${selectedSymbol} was scanned but not selected: ${selectedScan?.verdict ?? "no verdict recorded"}.`}
+                  {isChosen && view ? view.message : `${selectedSymbol} was scanned but not selected: ${selectedScan?.verdict ?? "no verdict recorded"}.`}
                 </p>
-                {isChosen && <ThesisSection run={shown} guided={false} />}
+                {isChosen && view && <ThesisSection run={view} guided={false} />}
                 <VolatilitySection observation={selectedScan?.observation ?? null} />
-                {isChosen && <SpreadSection run={shown} />}
-                {isChosen && shown.risk && <GatesSection checks={shown.risk.checks} approved={shown.risk.approved} guided={false} />}
+                {isChosen && view && <SpreadSection run={view} />}
+                {isChosen && view?.risk && <GatesSection checks={view.risk.checks} approved={view.risk.approved} guided={false} />}
               </>
             )}
           </div>

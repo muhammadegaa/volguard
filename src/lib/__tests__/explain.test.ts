@@ -33,7 +33,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
     orderIntent: null,
     alpacaOrderId: null,
     positionReviews: [],
-    exitOrderIds: [],
+    exitOrderIds: [], decisions: [],
     durationMs: 3000,
     message: "",
     ...overrides,

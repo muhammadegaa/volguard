@@ -235,6 +235,21 @@ export interface PositionReview {
   reason: string;
 }
 
+/**
+ * One symbol's outcome within a run. A run considers the whole ranked universe, so a run
+ * has as many of these as it had candidates — not one.
+ */
+export interface Decision {
+  symbol: string;
+  status: DecisionStatus;
+  observation: MarketObservation;
+  thesis: TradeThesis;
+  risk: RiskDecision | null;
+  orderIntent: OrderIntent | null;
+  alpacaOrderId: string | null;
+  message: string;
+}
+
 export interface AgentRun {
   id: string;
   startedAt: string;
@@ -255,6 +270,12 @@ export interface AgentRun {
      */
     observation: MarketObservation | null;
   }>;
+  /**
+   * Every candidate the allocator considered, in the order it spent the budget on them.
+   * The singular `observation` / `thesis` / `risk` / `orderIntent` / `alpacaOrderId` fields
+   * above are a view of the primary decision — the one the run's status came from.
+   */
+  decisions: Decision[];
   observation: MarketObservation | null;
   thesis: TradeThesis | null;
   risk: RiskDecision | null;

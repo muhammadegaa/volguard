@@ -8,12 +8,12 @@ import {
   saveRun,
 } from "./audit-store";
 import { AlpacaClient } from "./alpaca-api";
-import { buildOrderIntent, orderPayload, selectVerticalSpread } from "./chain";
+import { orderPayload } from "./chain";
+import { clientOrderIdFor, planAllocation, type AllocationCandidate } from "./allocation";
 import { getConfig, isConfigured, modeIsAllowed, type VolGuardConfig } from "./config";
 import { classifyEventRisk } from "./events";
 import { closePayload, closeSpreadPayload, countOpenPositions, groupVerticals, openRiskDollars, reviewPositions, reviewSpreads } from "./positions";
 import { dailyLossUsed as dailyLossFromAccount } from "./performance";
-import { evaluateRisk } from "./risk";
 import { decideStrategy, type StrategyVerdict } from "./strategy";
 import { generateThesis } from "./thesis";
 import type {
@@ -21,9 +21,12 @@ import type {
   AgentRun,
   AlpacaAccount,
   AuditEventType,
+  Decision,
+  DecisionStatus,
   MarketObservation,
   PositionReview,
   RunTrigger,
+  StrategyKind,
 } from "./types";
 import { buildVolatilityState, daysBetween, toChainRows, type ChainRow } from "./volatility";
 
@@ -252,6 +255,7 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
       mode,
       trigger,
       symbol: null,
+      decisions: [],
       observation: null,
       thesis: null,
       risk: null,
@@ -372,200 +376,165 @@ export async function runAgent(mode: AgentMode, trigger: RunTrigger = "manual"):
 
     if (tradable.length === 0) {
       const best = usable[0];
+      const thesis = best ? await generateThesis(best.observation, best.verdict) : null;
+      const message = usable.length === 0
+        ? "No symbol returned usable Alpaca data this run."
+        : `No symbol cleared the entry gate. ${scanned.map((s) => `${s.symbol}: ${s.verdict}`).join(" · ")}`;
       return finish({
         status: "NO_TRADE",
         symbol: best?.observation.symbol ?? null,
         scanned,
+        decisions: best && thesis
+          ? [{ symbol: best.observation.symbol, status: "NO_TRADE", observation: best.observation, thesis, risk: null, orderIntent: null, alpacaOrderId: null, message }]
+          : [],
         observation: best?.observation ?? null,
-        thesis: best ? await generateThesis(best.observation, best.verdict) : null,
-        positionReviews: reviews,
-        exitOrderIds,
-        message: usable.length === 0
-          ? "No symbol returned usable Alpaca data this run."
-          : `No symbol cleared the entry gate. ${scanned.map((s) => `${s.symbol}: ${s.verdict}`).join(" · ")}`,
-      });
-    }
-
-    const chosen = tradable[0];
-    const { observation, verdict } = chosen;
-    const thesis = await generateThesis(observation, verdict);
-    await event(runId, "THESIS_GENERATED", `Generated ${thesis.source} thesis for ${observation.symbol}`, { ...thesis });
-
-    // The model is allowed to veto. It is not allowed to create a trade.
-    if (thesis.strategy === "no_trade") {
-      return finish({
-        status: "NO_TRADE",
-        symbol: observation.symbol,
-        scanned,
-        observation,
         thesis,
         positionReviews: reviews,
         exitOrderIds,
-        message: `Thesis review downgraded ${observation.symbol} to no trade: ${thesis.catalyst}`,
+        message,
       });
     }
 
     // Outside regular hours every quote is stale by definition, so spread selection would
-    // reject on quote age and report it as missing data. Say the real reason instead.
+    // reject on quote age and report it as missing data. Say the real reason instead — and
+    // only for the leading candidate, since nothing can be allocated either way.
     if (!clock.is_open) {
+      const best = tradable[0];
+      const thesis = await generateThesis(best.observation, best.verdict);
+      const message = `Market is closed, so no order was constructed. ${best.observation.symbol} is the standing candidate on last-session data; next open ${clock.next_open}. ${reviews.length} open leg(s) reviewed.`;
       return finish({
         status: "NO_TRADE",
-        symbol: observation.symbol,
+        symbol: best.observation.symbol,
         scanned,
-        observation,
+        decisions: [{ symbol: best.observation.symbol, status: "NO_TRADE", observation: best.observation, thesis, risk: null, orderIntent: null, alpacaOrderId: null, message }],
+        observation: best.observation,
         thesis,
         positionReviews: reviews,
         exitOrderIds,
-        message: `Market is closed, so no order was constructed. ${observation.symbol} is the standing candidate on last-session data; next open ${clock.next_open}. ${reviews.length} open leg(s) reviewed.`,
+        message,
       });
     }
 
-    const candidate = selectVerticalSpread({ rows: chosen.rows, strategy: thesis.strategy, config, now: new Date() });
-    if (!candidate || candidate.rejection) {
-      return finish({
-        status: "DATA_UNAVAILABLE",
-        symbol: observation.symbol,
-        scanned,
-        observation,
-        thesis,
-        positionReviews: reviews,
-        exitOrderIds,
-        message: candidate?.rejection ?? "Alpaca did not return two contracts that form a tradable debit spread.",
-      });
+    // Theses are generated for every candidate at once. The allocator below must be
+    // sequential because each approval spends budget the next candidate can no longer see,
+    // but nothing about a thesis depends on the budget — running them in series would put
+    // several model round trips on the critical path of a 45-second run.
+    const theses = await Promise.all(tradable.map((item) => generateThesis(item.observation, item.verdict)));
+    const candidates: AllocationCandidate[] = tradable.map((item, index) => ({ ...item, thesis: theses[index] }));
+    for (const candidate of candidates) {
+      await event(runId, "THESIS_GENERATED", `Generated ${candidate.thesis.source} thesis for ${candidate.observation.symbol}`, { ...candidate.thesis });
     }
 
     const today = isoDate();
-    // Sourced from Alpaca equity vs previous close, so the budget reflects real drawdown.
-    const dailyLossUsed = dailyLossFromAccount(account);
-    // Deterministic within a symbol/strategy/day: replaying a run cannot double-submit.
-    const clientOrderId = `volguard-${today}-${observation.symbol}-${thesis.strategy}`.toLowerCase();
-    const intent = buildOrderIntent({
-      symbol: observation.symbol,
-      strategy: thesis.strategy,
-      candidate,
-      equity: Number(account.equity),
-      dailyLossRemaining: config.maxDailyLoss - dailyLossUsed,
-      openInterest: { long: null, short: null },
-      config,
-      clientOrderId,
-    });
-
-    if (intent.qty < 1) {
-      return finish({
-        status: "NO_TRADE",
-        symbol: observation.symbol,
-        scanned,
-        observation,
-        thesis,
-        orderIntent: intent,
-        positionReviews: reviews,
-        exitOrderIds,
-        // Max loss, not premium: for a credit spread the risk is the width less the credit,
-        // which is the number the budget is actually measured against.
-        message: `A single spread risks $${(intent.maxLoss || (Math.abs(candidate.netPrice) * 100)).toFixed(2)}, which exceeds the remaining risk budget. No position was opened.`,
-      });
+    // Checked up front so the allocator itself stays pure and synchronous. Only paper mode
+    // can collide with a real order.
+    const duplicateClientOrderIds = new Set<string>();
+    if (mode === "paper") {
+      const ids = candidates
+        .filter((candidate) => candidate.thesis.strategy !== "no_trade")
+        .map((candidate) => clientOrderIdFor(today, candidate.observation.symbol, candidate.thesis.strategy as Exclude<StrategyKind, "no_trade">));
+      const found = await Promise.all(ids.map((id) => client.findOrderByClientId(id).catch(() => null)));
+      found.forEach((order, index) => { if (order) duplicateClientOrderIds.add(ids[index]); });
     }
 
-    const duplicate = mode === "paper"
-      ? Boolean(await client.findOrderByClientId(clientOrderId).catch(() => null))
-      : false;
-
-    const risk = evaluateRisk({
+    const decisions = planAllocation({
+      candidates,
       account,
+      config,
+      marketOpen: clock.is_open,
       openPositionCount: countOpenPositions(reviews.filter((review) => review.action === "hold")),
       openRiskDollars: openRiskDollars(reviews, config.maxLossPerTrade),
-      dailyLossUsed,
-      intent,
-      duplicateClientOrderId: duplicate,
-      marketOpen: clock.is_open,
+      // Sourced from Alpaca equity vs previous close, so the budget reflects real drawdown.
+      dailyLossUsed: dailyLossFromAccount(account),
+      duplicateClientOrderIds,
+      today,
     });
 
-    if (!risk.approved) {
-      await event(runId, "RISK_REJECTED", "Risk engine rejected the candidate order", { reasons: risk.reasons, checks: risk.checks });
-      return finish({
-        status: "TRADE_REJECTED",
-        symbol: observation.symbol,
-        scanned,
-        observation,
-        thesis,
-        risk,
-        orderIntent: intent,
-        positionReviews: reviews,
-        exitOrderIds,
-        message: risk.reasons.join("; "),
-      });
+    for (const decision of decisions.filter((item) => item.status === "TRADE_REJECTED")) {
+      await event(runId, "RISK_REJECTED", `Risk engine rejected ${decision.symbol}`, { reasons: decision.risk?.reasons, checks: decision.risk?.checks });
     }
 
-    if (mode === "dry-run") {
-      await event(runId, "ORDER_SKIPPED", "Dry-run approved the order but did not submit it", orderPayload(intent));
-      return finish({
-        status: "TRADE_APPROVED",
-        symbol: observation.symbol,
-        scanned,
-        observation,
-        thesis,
-        risk,
-        orderIntent: intent,
-        positionReviews: reviews,
-        exitOrderIds,
-        message: `Dry-run approved a ${intent.qty}-lot ${thesis.strategy.replace(/_/g, " ")} on ${observation.symbol} at a $${intent.limitPrice.toFixed(2)} debit. No order was submitted.`,
-      });
+    for (const decision of decisions) {
+      if (decision.status !== "TRADE_APPROVED" || !decision.orderIntent) continue;
+      const intent = decision.orderIntent;
+
+      if (mode === "dry-run") {
+        await event(runId, "ORDER_SKIPPED", `Dry-run approved ${decision.symbol} but did not submit it`, orderPayload(intent));
+        continue;
+      }
+
+      // The last gate, and the only one about this process rather than the market: a run
+      // that already lost the timeout race must not place an order the caller was told did
+      // not happen. Later candidates are abandoned for the same reason.
+      if (abort.signal.aborted) {
+        decision.status = "ERROR";
+        decision.message = "The run exceeded its timeout before this order could be submitted. Nothing was sent.";
+        await event(runId, "ORDER_SKIPPED", `Run timed out before ${decision.symbol} was submitted; no order was placed`, { clientOrderId: intent.clientOrderId });
+        continue;
+      }
+
+      try {
+        const order = await client.submitOrder(orderPayload(intent));
+        decision.alpacaOrderId = typeof order.id === "string" ? order.id : null;
+        await event(runId, "ORDER_SUBMITTED", `Paper order submitted for ${decision.symbol}`, order);
+      } catch (error) {
+        // Alpaca may have accepted the order before the failure — a network timeout after
+        // acceptance looks identical here. The intent and the client order id are what make
+        // that recoverable, so they are recorded rather than lost to a bare ERROR.
+        const detail = error instanceof Error ? error.message : "unknown submission error";
+        decision.status = "ERROR";
+        decision.message = `Order submission failed: ${detail}. Alpaca may still have accepted it — reconcile against client order id ${intent.clientOrderId} before retrying.`;
+        await event(runId, "ERROR", `Order submission failed for ${decision.symbol}: ${detail}`, { clientOrderId: intent.clientOrderId, intent });
+      }
     }
 
-    // The last gate, and the only one that is about this process rather than the market: a
-    // run that already lost the timeout race must not place an order the caller was told
-    // did not happen.
-    if (abort.signal.aborted) {
-      await event(runId, "ORDER_SKIPPED", "Run timed out before submission; no order was placed", { clientOrderId });
-      return finish({
-        status: "ERROR",
-        symbol: observation.symbol,
-        scanned,
-        observation,
-        thesis,
-        risk,
-        orderIntent: intent,
-        positionReviews: reviews,
-        exitOrderIds,
-        message: "The run exceeded its timeout before the order could be submitted. Nothing was sent.",
-      });
-    }
-
-    let order: Record<string, unknown>;
-    try {
-      order = await client.submitOrder(orderPayload(intent));
-    } catch (error) {
-      // Alpaca may have accepted the order before the failure — a network timeout after
-      // acceptance looks identical here. The intent and the client order id are what make
-      // that recoverable, so they are recorded rather than lost to a bare ERROR.
-      const detail = error instanceof Error ? error.message : "unknown submission error";
-      await event(runId, "ERROR", `Order submission failed for ${observation.symbol}: ${detail}`, { clientOrderId, intent });
-      return finish({
-        status: "ERROR",
-        symbol: observation.symbol,
-        scanned,
-        observation,
-        thesis,
-        risk,
-        orderIntent: intent,
-        positionReviews: reviews,
-        exitOrderIds,
-        message: `Order submission failed: ${detail}. Alpaca may still have accepted it — reconcile against client order id ${clientOrderId} before retrying.`,
-      });
-    }
-    await event(runId, "ORDER_SUBMITTED", "Paper order submitted to Alpaca", order);
     return finish({
-      status: "TRADE_APPROVED",
-      symbol: observation.symbol,
+      ...runView(decisions, mode),
       scanned,
-      observation,
-      thesis,
-      risk,
-      orderIntent: intent,
-      alpacaOrderId: typeof order.id === "string" ? order.id : null,
+      decisions,
       positionReviews: reviews,
       exitOrderIds,
-      message: `Paper order submitted: ${intent.qty}-lot ${thesis.strategy.replace(/_/g, " ")} on ${observation.symbol} at a $${intent.limitPrice.toFixed(2)} debit, risking $${intent.maxLoss.toFixed(2)}.`,
     });
   }
+}
+
+/**
+ * Collapse the per-symbol decisions into the single status and message the run reports, and
+ * project the primary decision onto the singular fields the ledger and dashboard read.
+ *
+ * A submission failure outranks a success: a run that opened two positions and then failed
+ * on a third has an order that may exist at the broker, and that needs attention more than
+ * the two that worked.
+ */
+function runView(decisions: Decision[], mode: AgentMode): Pick<AgentRun, "status" | "message" | "symbol" | "observation" | "thesis" | "risk" | "orderIntent" | "alpacaOrderId"> {
+  const has = (status: DecisionStatus) => decisions.some((decision) => decision.status === status);
+  const status: DecisionStatus = has("ERROR")
+    ? "ERROR"
+    : has("TRADE_APPROVED")
+      ? "TRADE_APPROVED"
+      : has("TRADE_REJECTED")
+        ? "TRADE_REJECTED"
+        : has("DATA_UNAVAILABLE")
+          ? "DATA_UNAVAILABLE"
+          : "NO_TRADE";
+
+  const primary = decisions.find((decision) => decision.status === status) ?? decisions[0] ?? null;
+  const opened = decisions.filter((decision) => decision.status === "TRADE_APPROVED");
+  const declined = decisions.length - opened.length;
+
+  const summary = opened.length > 0
+    ? `${mode === "dry-run" ? "Dry-run approved" : "Opened"} ${opened.length} position(s): ${opened.map((decision) => decision.message).join(" · ")}`
+    : primary?.message ?? "No candidate reached the allocator.";
+  const tail = declined > 0 && opened.length > 0 ? ` ${declined} further candidate(s) declined.` : "";
+
+  return {
+    status,
+    message: `${summary}${tail}`,
+    symbol: primary?.symbol ?? null,
+    observation: primary?.observation ?? null,
+    thesis: primary?.thesis ?? null,
+    risk: primary?.risk ?? null,
+    orderIntent: primary?.orderIntent ?? null,
+    alpacaOrderId: primary?.alpacaOrderId ?? null,
+  };
 }

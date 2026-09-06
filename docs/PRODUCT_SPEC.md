@@ -25,23 +25,36 @@ able to name all six use cases from Guided in under a minute.
 ## Agent loop
 
 ```
-observe → measure volatility → score event risk → gate → select strategy →
-build spread → size → risk-check → execute (paper) → monitor → exit → record
+observe → measure volatility → score event risk → gate → rank →
+  for each candidate: select strategy → build spread → size → risk-check → commit budget →
+execute (paper) → monitor → exit → record
 ```
 
 Position review runs **before** and independently of new-entry logic: exits are never
 conditional on finding a fresh setup.
 
+The per-candidate loop is sequential because it carries three accumulators — the remaining
+daily loss budget, the open position count, and the open risk — and each approval spends
+them before the next candidate is measured. Every money limit in the risk engine compares a
+single intent against a limit, so candidates measured against the same starting state would
+each pass while the portfolio breached all three together.
+
 ## Decision contract
 
-Every run emits exactly one status:
+A run holds one decision per candidate it considered, each with its own status, thesis,
+order intent and risk record. The run's own status is the aggregate, in this precedence:
+a submission failure outranks a success, a success outranks a rejection, a rejection outranks
+missing data. The dashboard's headline fields are a view of whichever decision the run's
+status came from; the rest are reachable by selecting the symbol.
+
+The statuses a run or a decision can carry:
 
 | Status | Meaning |
 |---|---|
 | `TRADE_APPROVED` | All gates passed. Order submitted (paper) or withheld (dry-run). |
 | `TRADE_REJECTED` | A blocking risk gate failed. The failing gates are named. |
-| `NO_TRADE` | No symbol cleared the entry gate, or size rounds to zero, or the market is closed. The universe scan and per-symbol verdicts are published either way. |
-| `DATA_UNAVAILABLE` | Alpaca returned no tradable spread for the chosen symbol. |
+| `NO_TRADE` | No symbol cleared the entry gate, or size rounds to zero under what the budget has left, or the market is closed. The universe scan and per-symbol verdicts are published either way. |
+| `DATA_UNAVAILABLE` | Alpaca returned no tradable spread for any candidate that reached the chain. |
 | `CONFIGURATION_REQUIRED` | Credentials, paper mode, or account ID verification failed. |
 | `ERROR` | Unhandled failure; the message is recorded verbatim. |
 
@@ -78,8 +91,10 @@ layer and the risk engine, and is **off** pending verification of Alpaca's undoc
 convention for a net-credit multi-leg limit price.
 
 **Universe selection:** all symbols are scanned, and the universe is screened for options
-liquidity before a symbol enters the watchlist at all. The most negative variance risk
-premium wins on the buy side.
+liquidity before a symbol enters the watchlist at all. Candidates are ranked by variance risk
+premium, most negative first on the buy side, and the allocator works down that list until a
+budget runs out. One position per underlying per day, enforced by a client order id that is
+deterministic in symbol, strategy and date.
 
 ## Safety policy
 
@@ -88,7 +103,8 @@ premium wins on the buy side.
 - Options trading level must be ≥ 3.
 - Maximum loss per trade, as dollars and as a percentage of equity.
 - Daily loss budget and portfolio exposure cap, both enforced before submission.
-- Maximum open positions.
+- Maximum open positions, counted against positions this run has already opened as well as
+  those already held.
 - Whole-number quantities; `day` time-in-force.
 - Quotes must be fresh, two-sided, tight, and show depth. A missing timestamp fails closed.
 - The global kill switch rejects every execution path.

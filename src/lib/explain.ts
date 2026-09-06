@@ -1,4 +1,4 @@
-import type { AgentRun, DecisionStatus, EventSeverity } from "./types";
+import type { AgentRun, Decision, DecisionStatus, EventSeverity } from "./types";
 
 /**
  * The plain-language layer.
@@ -251,6 +251,27 @@ export function explainVerdict(verdict: string): Explanation {
   }
 
   return { headline: verdict, detail: "", tone: "neutral" };
+}
+
+/**
+ * Every per-symbol decision in a run, including runs recorded before the allocator existed.
+ * Those carry exactly one decision, spread across the run's singular fields; reconstructing
+ * it here means the dashboard has one shape to render rather than two code paths.
+ */
+export function decisionsOf(run: AgentRun | null | undefined): Decision[] {
+  if (!run) return [];
+  if (run.decisions?.length) return run.decisions;
+  if (!run.symbol || !run.observation || !run.thesis) return [];
+  return [{
+    symbol: run.symbol,
+    status: run.status,
+    observation: run.observation,
+    thesis: run.thesis,
+    risk: run.risk,
+    orderIntent: run.orderIntent,
+    alpacaOrderId: run.alpacaOrderId,
+    message: run.message,
+  }];
 }
 
 /** Compact label for the scan table in beginner mode. */

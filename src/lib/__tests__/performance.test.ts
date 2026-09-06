@@ -32,7 +32,7 @@ const run = (overrides: Partial<AgentRun> = {}): AgentRun => ({
   mode: "paper", trigger: "manual", status: "TRADE_APPROVED", symbol: "SPY",
   scanned: [], observation: null, thesis: null, risk: null,
   orderIntent: intent(), alpacaOrderId: "6231e8dd-3198-4b55-973b-d98c1f483d52",
-  positionReviews: [], exitOrderIds: [], durationMs: 100, message: "",
+  positionReviews: [], exitOrderIds: [], decisions: [], durationMs: 100, message: "",
   ...overrides,
 });
 

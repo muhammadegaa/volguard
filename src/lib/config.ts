@@ -32,7 +32,7 @@ export function getConfig() {
     maxLossPerTrade: numberEnv("VOLGUARD_MAX_LOSS_PER_TRADE", 250),
     maxRiskPercent: numberEnv("VOLGUARD_MAX_RISK_PERCENT", 0.01),
     maxDailyLoss: numberEnv("VOLGUARD_MAX_DAILY_LOSS", 500),
-    maxOpenPositions: numberEnv("VOLGUARD_MAX_OPEN_POSITIONS", 3),
+    maxOpenPositions: numberEnv("VOLGUARD_MAX_OPEN_POSITIONS", 5),
     maxPortfolioRiskPercent: numberEnv("VOLGUARD_MAX_PORTFOLIO_RISK_PERCENT", 0.05),
     maxContracts: numberEnv("VOLGUARD_MAX_CONTRACTS", 5),
 

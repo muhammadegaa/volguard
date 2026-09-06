@@ -118,4 +118,17 @@ describe("ledger size", () => {
     expect(runs[0].scanned[0].observation).not.toBeNull();
     expect(runs[1].scanned[0].observation).toBeNull();
   });
+
+  it("keeps the analysis on the newest run that actually scanned, not merely the newest run", async () => {
+    const store = await loadStore({ VOLGUARD_STORE_PATH: "/tmp/volguard-test/ledger-skip.json" });
+    store.resetStoreCache();
+    await store.saveRun(run("scan") as never);
+    // A run skipped by the lock, or one that failed before the scan, records no scan of its
+    // own. Stripping the run behind it left the dashboard rendering blank evidence panels.
+    await store.saveRun({ ...run("skipped"), scanned: [] } as never);
+
+    const runs = await store.getRuns();
+    expect(runs[0].scanned).toHaveLength(0);
+    expect(runs[1].scanned[0].observation).not.toBeNull();
+  });
 });
